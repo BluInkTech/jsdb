@@ -11,7 +11,8 @@
 		"dev": "tsx index.ts",
 		"build": "tsc",
 		"test": "node --trace-warnings --import tsx --test test/*.tests.ts",
-		"type-check": "tsc --noEmit"
+		"type-check": "tsc --noEmit",
+		"benchmark": "npm run build && node ./test/benchmark.mjs"
 	},
 	"author": "Seemant Rajvanshi",
 	"license": "MIT",

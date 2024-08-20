@@ -1,13 +1,10 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { JsDb } from '../index.js'
-import { deleteTempDir, getTempDir, words } from './helpers.js'
+import { deleteTempDir, getTempDir, words } from './helpers.mjs'
 
 describe('High level tests', () => {
 	const db = new JsDb({ dirPath: getTempDir() })
-	before(async () => {
-		await db.open()
-	})
 
 	after(async () => {
 		await assert.doesNotReject(db.close())

@@ -1,4 +1,6 @@
 import { mkdirSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 //  100 words with unicode characters
 export const words = [
@@ -145,11 +147,11 @@ export const words = [
 ]
 
 export const getTempDir = () => {
-	const tempDir = `./temp/${Math.random().toString(36).substring(7)}`
+	const tempDir = path.join(os.tmpdir(), Math.random().toString(36).substring(7))
 	mkdirSync(tempDir, { recursive: true })
 	return tempDir
 }
 
-export const deleteTempDir = (dirPath: string) => {
+export const deleteTempDir = (dirPath) => {
 	rmSync(dirPath, { recursive: true, force: true })
 }
