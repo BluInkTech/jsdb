@@ -1,0 +1,30 @@
+{
+	"name": "jsdb",
+	"version": "0.0.1",
+	"description": "A fast NodeJS JSON database with reasonable scalability",
+	"main": "index.js",
+	"type": "module",
+	"engines": {
+		"node": ">=22.0.0"
+	},
+	"scripts": {
+		"dev": "tsx index.ts",
+		"build": "tsc",
+		"test": "node --trace-warnings --import tsx --test test/*.tests.ts",
+		"type-check": "tsc --noEmit"
+	},
+	"author": "Seemant Rajvanshi",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/BluInkTech/jsdb"
+	},
+	"keywords": ["database", "json", "kv"],
+	"dependencies": {},
+	"devDependencies": {
+		"@biomejs/biome": "1.8.3",
+		"@types/node": "22.1.0",
+		"tsx": "4.17.0",
+		"typescript": "5.5.4"
+	}
+}
