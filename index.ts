@@ -1,30 +1,38 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
-import { open } from 'node:fs/promises'
-import type { FileHandle } from 'node:fs/promises'
 import path from 'node:path'
-import { debug } from 'node:util'
+import {
+	type MapEntry,
+	type Page,
+	openOrCreatePageFile,
+	readPageFile,
+	readValue,
+	writeValue,
+} from './internal/index.js'
+import {
+	calculateStaleBytes,
+	getfreePage,
+	mergePageMaps,
+	removeDeletedEntires,
+	updateStaleBytes,
+} from './internal/pages.js'
 
-const logger = debug('jsdb')
-const MAX_PAGE_SIZE = 1024 * 1024 * 4 // 4MB
-
+/**
+ * Base interface for a record in the database. Essentially, a record
+ * should have a unique identifier (id) field.
+ */
 export interface Idable {
+	/**
+	 * The unique identifier for the record.
+	 */
 	id: string
-}
 
-type MapEntry = {
-	f: number // file number
-	o: number // offset
-	s: number // size
-	_?: unknown // inline data used for fast access
-} & Idable
-
-type Page = {
-	fileName: string
-	locked: boolean
-	handle: FileHandle
-	size: number
-	staleBytes: number
-	close: () => Promise<void>
+	/**
+	 * The sequence number for the record. This is used to determine
+	 * the order of the operations in the database. This field is auto
+	 * generated and should not be set by the user.
+	 */
+	_seq?: number
+	[index: string]: unknown
 }
 
 /**
@@ -35,7 +43,7 @@ export type JsDbOptions = {
 	 * The directory where the database files are stored. There should
 	 * be a separate directory for each database.
 	 */
-	readonly dirPath: string
+	dirPath: string
 
 	/**
 	 * The fields that should be cached in memory for faster access. There
@@ -44,13 +52,13 @@ export type JsDbOptions = {
 	 * The cached fields are also written twice to the file, once in the index
 	 * and once in the page file.
 	 */
-	cachedFields?: string[]
+	cachedFields: string[]
 
 	/**
 	 * The suggested size of a page file in KB. The default is 4096 KB. When the
 	 * page file reaches this size, a new page file is created.
 	 */
-	maxPageSize?: number
+	maxPageSize: number
 
 	/**
 	 * The delay in milliseconds before the data is synced to disk. The default is
@@ -60,7 +68,7 @@ export type JsDbOptions = {
 	 * the performance of the database but will provide maximum relaibility. In case
 	 * of a crash, the data will be lost if the data is not synced to disk.
 	 */
-	dataSyncDelay?: number
+	dataSyncDelay: number
 
 	/**
 	 * The threshold in bytes for stale data in a page. When the stale data reaches
@@ -69,7 +77,7 @@ export type JsDbOptions = {
 	 * value low will cause frequent compaction and reduce the performance of the
 	 * database.
 	 */
-	staleDataThreshold?: number
+	staleDataThreshold: number
 }
 
 /**
@@ -77,9 +85,26 @@ export type JsDbOptions = {
  */
 export class JsDb {
 	private map: Map<string, MapEntry> = new Map()
+	deletePage: Page | undefined
 	private pages: Page[] = []
-	index: Page | undefined
+	private opened = false
 	private lastUsedPage = -1
+	private sequence = 0
+	private opts: JsDbOptions = {
+		dirPath: '',
+		maxPageSize: 4096,
+		dataSyncDelay: 1000 * 15,
+		staleDataThreshold: 0.4,
+		cachedFields: [],
+	}
+
+	/**
+	 * Get the options for the database. The options are read only and cannot be changed.
+	 * @returns The options for the database
+	 */
+	get options(): Readonly<JsDbOptions> {
+		return this.opts
+	}
 
 	/**
 	 * Create a new instance of the JsDb.
@@ -89,36 +114,39 @@ export class JsDb {
 	 * @throws Error if the maxPageSize is less than 1024 KB (default 4096 KB)
 	 * @throws Error if the staleDataThreshold is not between 0 and 1 (default 0.4)
 	 */
-	constructor(readonly options: JsDbOptions) {
+	constructor(options: Partial<JsDbOptions>) {
 		if (!options.dirPath) {
 			throw new Error('dirPath is required')
 		}
+		this.opts.dirPath = options.dirPath
 
-		if (!options.maxPageSize) {
-			options.maxPageSize = 4096
-		} else if (options.maxPageSize < 1024 || options.maxPageSize % 1024 !== 0) {
-			throw new Error('maxPageSize must be at least 1024 KB')
+		if (options.maxPageSize) {
+			if (options.maxPageSize < 1024 || options.maxPageSize % 1024 !== 0) {
+				throw new Error('maxPageSize must be at least 1024 KB')
+			}
+			this.opts.maxPageSize = options.maxPageSize
 		}
 
-		if (!options.dataSyncDelay) {
-			options.dataSyncDelay = 1000 * 15
+		if (options.dataSyncDelay) {
+			this.opts.dataSyncDelay = 1000 * 15
 		}
 
-		if (!options.staleDataThreshold) {
-			options.staleDataThreshold = 0.4
-		} else if (options.staleDataThreshold < 0 || options.staleDataThreshold > 1) {
-			throw new Error('staleDataThreshold must be between 0 and 1')
+		if (options.staleDataThreshold) {
+			if (options.staleDataThreshold < 0 || options.staleDataThreshold > 1) {
+				throw new Error('staleDataThreshold must be between 0 and 1')
+			}
+			this.opts.staleDataThreshold = options.staleDataThreshold
 		}
 
-		if (!options.cachedFields) {
-			options.cachedFields = []
+		if (options.cachedFields && Array.isArray(options.cachedFields) && options.cachedFields.length > 0) {
+			this.opts.cachedFields = []
 		}
 
-		if (!existsSync(options.dirPath)) {
-			mkdirSync(options.dirPath, { recursive: true })
+		if (!existsSync(this.opts.dirPath)) {
+			mkdirSync(this.opts.dirPath, { recursive: true })
 		} else {
 			// check if the path is a directory
-			const stats = statSync(options.dirPath)
+			const stats = statSync(this.opts.dirPath)
 			if (!stats.isDirectory()) {
 				throw new Error('dirPath must be a directory')
 			}
@@ -133,27 +161,55 @@ export class JsDb {
 	 * @throws Error if the database is already open
 	 */
 	async open() {
-		if (this.index) {
+		if (this.opened) {
 			throw new Error('database already open', {
 				cause:
 					'The database is already open. Ensure that is database is only opened once as opening it multiple times can lead to data corruption.',
 			})
 		}
-		const indexPath = path.join(this.options.dirPath, 'index.db')
-		this.index = await openIndex(indexPath, this.map)
+
+		this.map = new Map()
 
 		// find all files with .page extension
-		const files = readdirSync(this.options.dirPath)
-			.filter((file) => file.endsWith('.page'))
-			.map((file) => path.join(this.options.dirPath, file))
+		const files = readdirSync(this.opts.dirPath)
+			.filter((file) => file.endsWith('.page') && !file.startsWith('10000'))
+			.map((file) => path.join(this.opts.dirPath, file))
+
+		const maps = await Promise.all(files.map((file) => readPageFile<MapEntry>(file, 'append', this.opts.cachedFields)))
+
+		// merge the maps
+		mergePageMaps(this.map, ...maps)
+
+		// open the delete log
+		const deletePagePath = path.join(this.opts.dirPath, '10000.page')
+		const deleteMap = await readPageFile<number>(deletePagePath, 'delete')
+
+		// apply the delete log
+		removeDeletedEntires(this.map, deleteMap)
+
+		this.deletePage = await openOrCreatePageFile(deletePagePath)
 
 		// open each page
 		for (const file of files) {
-			const page = await openPage(file)
+			const page = await openOrCreatePageFile(file)
 			this.pages.push(page)
 		}
 
-		this.calculateStaleBytes()
+		calculateStaleBytes(this.pages, this.map)
+
+		// set the sequence number
+		let seqNumber = 0
+		for (const entry of this.map.values()) {
+			seqNumber = Math.max(seqNumber, entry._seq)
+		}
+		//  also check the delete Map
+		for (const entry of deleteMap.values()) {
+			seqNumber = Math.max(seqNumber, entry)
+		}
+		this.sequence = seqNumber
+
+		// finally open the database for usage
+		this.opened = true
 	}
 
 	/**
@@ -163,10 +219,11 @@ export class JsDb {
 	 */
 	async close() {
 		await Promise.all(this.pages.map((page) => page.close()))
-		await this.index?.close()
-		this.index = undefined
+		await this.deletePage?.close()
 		this.pages = []
+		this.deletePage = undefined
 		this.map.clear()
+		this.opened = false
 	}
 
 	/**
@@ -197,9 +254,9 @@ export class JsDb {
 		const entry = this.map.get(id)
 		if (!entry) return undefined
 
-		const page = this.pages[entry.f]
+		const page = this.pages[entry.fileNumber]
 		if (!page) return
-		const value = (await readValue(page, entry.o, entry.s)) as Idable
+		const value = (await readValue(page, entry.offset, entry.size)) as Idable
 		if (!value.id) {
 			throw new Error('id missing in value')
 		}
@@ -216,51 +273,35 @@ export class JsDb {
 	 * @throws Error if the database is not open
 	 * @throws Error if a valid ID is not provided
 	 */
-	async set<T extends Idable>(id: string, value: T) {
+	async set<T extends Idable>(id: string, value: T): Promise<T> {
 		this.isOpen()
 		this.isValidId(id)
 
 		value.id = id
-		const json = `${JSON.stringify(value)}\n`
 
-		// find the page with the least size to store the data
-		let page: Page | undefined = undefined
-		for (let i = 0; i < this.pages.length; i++) {
-			const p = this.pages[i]
-			if (p && p.size < MAX_PAGE_SIZE && i !== this.lastUsedPage && !p.locked) {
-				page = p
-				this.lastUsedPage = i
-				break
-			}
-		}
+		const page = await getfreePage(this.pages, this.opts.maxPageSize, this.lastUsedPage, this.opts.dirPath)
 
-		// if no page is found, create a new one
-		if (!page) {
-			page = await openPage(path.join(this.options.dirPath, `${this.pages.length}.page`))
-			this.pages.push(page)
-			this.lastUsedPage = this.pages.length - 1
-		}
-
-		// first write the value to the page so that we can get the offset and size
-		// if it fails we will not update the index
+		// write the value to the page
 		const offset = page.size
-		const bytesWritten = await writeValue(page, json)
+		this.sequence++
+		value._seq = this.sequence
+		const jsonStr = `${JSON.stringify(value)}\n`
+		const bytesWritten = await writeValue(page.handle, Buffer.from(jsonStr))
 
-		// update the index, the size can't be json.length as emoji characters get reported differently
-		// using the length property
-		const entry = { id, f: this.lastUsedPage, o: offset, s: bytesWritten }
-		await writeValue(this.index, `${JSON.stringify(entry)}\n`)
+		// update the page size for book keeping
+		page.size += bytesWritten
+		this.lastUsedPage = page.pageNo
 
-		// check if the entry already exists in map
-		const existingEntry = this.map.get(id)
-		if (existingEntry) {
-			// update the stale bytes for the page
-			const existingPage = this.pages[existingEntry.f]
-			if (existingPage) {
-				existingPage.staleBytes += existingEntry.s
-			}
+		const entry: MapEntry = {
+			fileNumber: page.pageNo,
+			offset: offset,
+			size: bytesWritten,
+			_seq: value._seq,
 		}
+
+		updateStaleBytes(id, this.pages, this.map)
 		this.map.set(id, entry)
+		return value
 	}
 
 	/**
@@ -276,15 +317,23 @@ export class JsDb {
 		const entry = this.map.get(id)
 		if (!entry) return
 
-		// mark the entry as deleted
-		await writeValue(this.index, `-${id}\n`)
+		// write the value to the page
+		const sequence = ++this.sequence
+		const jsonStr = `${JSON.stringify({ id, _s: sequence })}\n`
+		await writeValue(this.deletePage.handle, Buffer.from(jsonStr))
+
+		// Mark the entry as deleted. In case of of deleted entry we are not tracking the size
+		// of the new entry so out calculation will be slightly off but in the grand scheme of
+		// things it should not matter much.
+		updateStaleBytes(id, this.pages, this.map)
 		this.map.delete(id)
 	}
 
-	private isOpen(): asserts this is { index: Page } {
-		if (this.index === undefined) {
+	// check if the database is open
+	private isOpen(): asserts this is { deletePage: Page } {
+		if (!this.opened) {
 			throw new Error('db not open', {
-				cause: 'The database is not open. Call open() before using the database',
+				cause: 'The database is not open. Call open() before using the database.',
 			})
 		}
 	}
@@ -293,89 +342,8 @@ export class JsDb {
 	private isValidId(id: string): asserts id is string {
 		if (!id) {
 			throw new Error('id is required', {
-				cause: 'A valid ID is required for the operation',
+				cause: 'A valid ID is required for the operation.',
 			})
 		}
-	}
-
-	// calculate the stale bytes in a page by summing the sizes of all values in a page
-	// minus the size of the page
-	private calculateStaleBytes() {
-		const totalData: Record<number, number> = {}
-		for (const [_, entry] of this.map) {
-			totalData[entry.f] = (totalData[entry.f] || 0) + entry.s
-		}
-
-		for (let i = 0; i < this.pages.length; i++) {
-			const page = this.pages[i]
-			if (!page) continue
-			page.staleBytes = page.size - (totalData[i] || 0)
-		}
-	}
-}
-
-// open an index file or create a new one
-async function openIndex(indexPath: string, map: Map<string, MapEntry>): Promise<Page> {
-	if (existsSync(indexPath)) {
-		await readJsonNlFile(indexPath, map)
-	}
-	return openPage(indexPath)
-}
-
-// read a jsonl file and populate the map
-async function readJsonNlFile(path: string, map: Map<string, MapEntry>) {
-	const handle = await open(path, 'a+')
-	for await (const line of handle.readLines()) {
-		if (line === '') continue
-
-		if (line.startsWith('-')) {
-			// it is a delete operation, get the id and remove it from the map
-			const id = line.slice(1)
-			map.delete(id)
-		} else {
-			const json = JSON.parse(line)
-			if (!json.id) {
-				continue
-			}
-			map.set(json.id, json)
-		}
-	}
-	await handle.close()
-}
-
-// Page related functions
-// open a page record or create a new one
-async function openPage(pagePath: string): Promise<Page> {
-	const handle = await open(pagePath, 'a+')
-	const stats = await handle.stat()
-	logger('Opened file descriptor', handle.fd, pagePath)
-	return {
-		fileName: pagePath,
-		locked: false,
-		handle,
-		size: stats.size,
-		staleBytes: 0,
-		close: async () => {
-			await handle.close()
-		},
-	}
-}
-
-async function readValue(page: Page, offset: number, length: number): Promise<unknown> {
-	const value = await page.handle.read(Buffer.alloc(length), 0, length, offset)
-	return JSON.parse(value.buffer.toString())
-}
-
-// write a value to the end of the page
-async function writeValue(page: Page, value: string): Promise<number> {
-	try {
-		const buffer = Buffer.from(value)
-		const written = await page.handle.write(buffer, 0, buffer.length, -1)
-		page.size += written.bytesWritten
-		// await page.handle.datasync()
-		return written.bytesWritten
-	} catch (error) {
-		logger('Error writing to page', error)
-		throw error
 	}
 }

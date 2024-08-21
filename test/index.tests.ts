@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { after, before, describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 import { JsDb } from '../index.js'
 import { deleteTempDir, getTempDir, words } from './helpers.mjs'
 
@@ -16,15 +16,15 @@ describe('High level tests', () => {
 	})
 
 	it('add a new entry', async () => {
-		await db.set('1', { id: '1', name: 'John Doe' })
+		const sut = await db.set('1', { id: '1', name: 'John Doe' })
 		const entry = await db.get('1')
-		assert.deepEqual(entry, { id: '1', name: 'John Doe' })
+		assert.deepEqual(entry, sut)
 	})
 
 	it('update an entry', async () => {
-		await db.set('1', { id: '1', name: 'Jane Doe' })
+		const sut = await db.set('1', { id: '1', name: 'Jane Doe' })
 		const entry = await db.get('1')
-		assert.deepEqual(entry, { id: '1', name: 'Jane Doe' })
+		assert.deepEqual(entry, sut)
 	})
 
 	it('get a non-existing entry', async () => {
@@ -54,7 +54,9 @@ describe('High level tests', () => {
 	it('get 100 unicode entries', async () => {
 		for (let i = 0; i < 100; i++) {
 			const entry = await db.get(i.toString())
-			assert.deepEqual(entry, { id: i.toString(), name: words[i] })
+			assert(entry !== undefined)
+			assert.equal(entry.id, i.toString())
+			assert.equal(entry.name, words[i])
 		}
 	})
 
@@ -65,7 +67,9 @@ describe('High level tests', () => {
 		// check if the entries are still there
 		for (let i = 0; i < 100; i++) {
 			const entry = await db.get(i.toString())
-			assert.deepEqual(entry, { id: i.toString(), name: words[i] })
+			assert(entry !== undefined)
+			assert.equal(entry.id, i.toString())
+			assert.equal(entry.name, words[i])
 		}
 	})
 })
