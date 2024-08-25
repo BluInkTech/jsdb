@@ -7,16 +7,17 @@ import type { MapEntry, Page } from './types.js'
  * last used page and not be full.
  * @param pages current pages
  * @param maxPageSize maximum allowed page size
- * @param lastUsedPage page number of the last used page
+ * @param lastUsedPageIdx page number of the last used page
  * @returns a page that can be used for writing or undefined if no page is available
  */
-function findFreePage(pages: Page[], maxPageSize: number, lastUsedPage: number): Page | undefined {
+function findFreePage(pages: Page[], maxPageSize: number, lastUsedPageIdx: number): Page | undefined {
 	// NOTE: for loop with cached length is faster than other methods like for of etc. The below code is
 	// in the hot path.
 	const length = pages.length
-	for (let i = 0; i < length; i++) {
+	const startIdx = lastUsedPageIdx >= 0 && lastUsedPageIdx < length ? lastUsedPageIdx + 1 : 0
+	for (let i = startIdx; i < length; i++) {
 		// @ts-ignore - pages[i] can't be undefined as we are iterating over the array after checking its length
-		if (!pages[i].locked && pages[i].pageNo !== lastUsedPage && pages[i].size < maxPageSize) {
+		if (!pages[i].locked && pages[i].pageId !== lastUsedPageIdx && pages[i].size < maxPageSize) {
 			return pages[i]
 		}
 	}
@@ -27,7 +28,7 @@ function findFreePage(pages: Page[], maxPageSize: number, lastUsedPage: number):
  * Get a free page for writing and if no page is found, create a new one.
  * @param pages current pages
  * @param maxPageSize maximum allowed page size
- * @param lastUsedPage page number of the last used page
+ * @param lastUsedPageIdx page number of the last used page
  * @param basePath base path for the page files
  * @param createPage function to create a new page
  * @returns a page that can be used for writing
@@ -35,11 +36,11 @@ function findFreePage(pages: Page[], maxPageSize: number, lastUsedPage: number):
 export async function getfreePage(
 	pages: Page[],
 	maxPageSize: number,
-	lastUsedPage: number,
+	lastUsedPageIdx: number,
 	basePath: string,
 	createPage: (pagePath: string) => Promise<Page> = openOrCreatePageFile,
 ): Promise<Page> {
-	let page = findFreePage(pages, maxPageSize, lastUsedPage)
+	let page = findFreePage(pages, maxPageSize, lastUsedPageIdx)
 
 	// if no page is found, create a new one
 	if (!page) {
@@ -63,7 +64,9 @@ export function mergePageMaps(target: Map<string, MapEntry>, ...maps: Map<string
 	for (const map of maps) {
 		for (const [key, value] of map) {
 			const existing = target.get(key)
-			if (existing && existing._seq > value._seq) {
+			// use greater than equal to as compaction might result in same sequence number
+			// but offset might be different.
+			if (existing && existing._seq >= value._seq) {
 				continue
 			}
 			target.set(key, value)
@@ -96,15 +99,15 @@ export function removeDeletedEntires(target: Map<string, MapEntry>, deleteMap: M
  * @param map The map of entries
  */
 export function calculateStaleBytes(pages: Page[], map: Map<string, MapEntry>) {
-	const totalData: Record<number, number> = {}
+	const totalData: Record<string, number> = {}
 	for (const [_, entry] of map) {
-		totalData[entry.fileNumber] = (totalData[entry.fileNumber] || 0) + entry.size
+		totalData[entry.pageId] = (totalData[entry.pageId] || 0) + entry.size
 	}
 
 	for (let i = 0; i < pages.length; i++) {
 		const page = pages[i]
 		if (!page) continue
-		page.staleBytes = page.size - (totalData[i] || 0)
+		page.staleBytes = page.size - (totalData[page.pageId] || 0)
 	}
 }
 
@@ -118,9 +121,11 @@ export function calculateStaleBytes(pages: Page[], map: Map<string, MapEntry>) {
 export function updateStaleBytes(id: string, pages: Page[], map: Map<string, MapEntry>) {
 	const existingEntry = map.get(id)
 	if (existingEntry) {
-		const existingPage = pages[existingEntry.fileNumber]
+		const existingPage = pages.find((p) => p.pageId === existingEntry.pageId)
 		if (existingPage) {
 			existingPage.staleBytes += existingEntry.size
+		} else {
+			throw new Error('INTERNAL:Page not found. We have a page entry but the page is missing.')
 		}
 	}
 }

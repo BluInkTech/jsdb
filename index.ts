@@ -88,7 +88,7 @@ export class JsDb {
 	deletePage: Page | undefined
 	private pages: Page[] = []
 	private opened = false
-	private lastUsedPage = -1
+	private lastUsedPageIdx = -1
 	private sequence = 0
 	private opts: JsDbOptions = {
 		dirPath: '',
@@ -172,22 +172,23 @@ export class JsDb {
 
 		// find all files with .page extension
 		const files = readdirSync(this.opts.dirPath)
-			.filter((file) => file.endsWith('.page') && !file.startsWith('10000'))
-			.map((file) => path.join(this.opts.dirPath, file))
+			.filter((file) => file.endsWith('.page'))
+			.map((file) => {
+				return path.join(this.opts.dirPath, file)
+			})
 
-		const maps = await Promise.all(files.map((file) => readPageFile<MapEntry>(file, 'append', this.opts.cachedFields)))
+		const maps = await Promise.all(files.map((pageFile) => readPageFile(pageFile, 'append', this.opts.cachedFields)))
 
 		// merge the maps
 		mergePageMaps(this.map, ...maps)
 
 		// open the delete log
-		const deletePagePath = path.join(this.opts.dirPath, '10000.page')
-		const deleteMap = await readPageFile<number>(deletePagePath, 'delete')
+		const deletePagePath = path.join(this.opts.dirPath, 'delete.log')
+		this.deletePage = await openOrCreatePageFile(deletePagePath)
+		const deleteMap = await readPageFile(deletePagePath, 'delete')
 
 		// apply the delete log
 		removeDeletedEntires(this.map, deleteMap)
-
-		this.deletePage = await openOrCreatePageFile(deletePagePath)
 
 		// open each page
 		for (const file of files) {
@@ -227,11 +228,14 @@ export class JsDb {
 	}
 
 	/**
-	 * Check if a record exists in the database.
+	 * Check if a record exists in the database. It is faster than get as no file
+	 * read is required.
 	 * @param id Id of the record
 	 * @returns true if the record exists, false otherwise
+	 * @throws Error if the database is not open
+	 * @throws Error if a valid ID is not provided
 	 */
-	exists(id: string): boolean {
+	has(id: string): boolean {
 		this.isOpen()
 		this.isValidId(id)
 
@@ -254,7 +258,7 @@ export class JsDb {
 		const entry = this.map.get(id)
 		if (!entry) return undefined
 
-		const page = this.pages[entry.fileNumber]
+		const page = this.pages.find((page) => page.pageId === entry.pageId)
 		if (!page) return
 		const value = (await readValue(page, entry.offset, entry.size)) as Idable
 		if (!value.id) {
@@ -279,7 +283,7 @@ export class JsDb {
 
 		value.id = id
 
-		const page = await getfreePage(this.pages, this.opts.maxPageSize, this.lastUsedPage, this.opts.dirPath)
+		const page = await getfreePage(this.pages, this.opts.maxPageSize, this.lastUsedPageIdx, this.opts.dirPath)
 
 		// write the value to the page
 		const offset = page.size
@@ -290,10 +294,10 @@ export class JsDb {
 
 		// update the page size for book keeping
 		page.size += bytesWritten
-		this.lastUsedPage = page.pageNo
+		this.lastUsedPageIdx++
 
 		const entry: MapEntry = {
-			fileNumber: page.pageNo,
+			pageId: page.pageId,
 			offset: offset,
 			size: bytesWritten,
 			_seq: value._seq,
@@ -319,7 +323,7 @@ export class JsDb {
 
 		// write the value to the page
 		const sequence = ++this.sequence
-		const jsonStr = `${JSON.stringify({ id, _s: sequence })}\n`
+		const jsonStr = `${JSON.stringify({ id, _seq: sequence })}\n`
 		await writeValue(this.deletePage.handle, Buffer.from(jsonStr))
 
 		// Mark the entry as deleted. In case of of deleted entry we are not tracking the size

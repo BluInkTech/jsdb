@@ -6,3 +6,4 @@
 
 export * from './types.js'
 export * from './page.js'
+export * from './pages.js'

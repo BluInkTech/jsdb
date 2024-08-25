@@ -5,7 +5,7 @@ import type { FileHandle } from 'node:fs/promises'
  * @internal
  */
 export type MapEntry = {
-	fileNumber: number // file number
+	pageId: string // file identifier
 	offset: number // offset
 	size: number // size
 	_seq: number // sequence number
@@ -19,7 +19,7 @@ export type MapEntry = {
  */
 export type Page = {
 	fileName: string
-	pageNo: number
+	pageId: string
 	locked: boolean
 	handle: FileHandle
 	size: number
