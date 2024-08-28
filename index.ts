@@ -3,6 +3,7 @@ import path from 'node:path'
 import {
 	type MapEntry,
 	type Page,
+	compactPage,
 	openOrCreatePageFile,
 	readPageFile,
 	readValue,
@@ -71,6 +72,16 @@ export type JsDbOptions = {
 	dataSyncDelay: number
 
 	/**
+	 * The delay in milliseconds before the page is compacted. The default is 5
+	 * minutes. The page is eligible for compaction when the size of the stale
+	 * entries reaches the staleDataThreshold percentage.
+	 * Compaction is done asynchronously and does not block the main thread. There
+	 * should still be an impact of around 50ms when the pages are switched in
+	 * the main thread.
+	 */
+	comapctDelay: number
+
+	/**
 	 * The threshold in bytes for stale data in a page. When the stale data reaches
 	 * this threshold, the page is considered is compacted to free up the space. The
 	 * default is 0.4. Setting the value to 0 will disable compaction. Setting the
@@ -90,16 +101,18 @@ export class JsDb {
 	private opened = false
 	private lastUsedPageIdx = -1
 	private sequence = 0
+	private timers: NodeJS.Timeout[] = []
 	private opts: JsDbOptions = {
 		dirPath: '',
 		maxPageSize: 4096,
 		dataSyncDelay: 1000 * 15,
 		staleDataThreshold: 0.4,
+		comapctDelay: 1000 * 60 * 5,
 		cachedFields: [],
 	}
 
 	/**
-	 * Get the options for the database. The options are read only and cannot be changed.
+	 * Get the options for the database.
 	 * @returns The options for the database
 	 */
 	get options(): Readonly<JsDbOptions> {
@@ -128,7 +141,7 @@ export class JsDb {
 		}
 
 		if (options.dataSyncDelay) {
-			this.opts.dataSyncDelay = 1000 * 15
+			this.opts.dataSyncDelay = options.dataSyncDelay
 		}
 
 		if (options.staleDataThreshold) {
@@ -138,7 +151,15 @@ export class JsDb {
 			this.opts.staleDataThreshold = options.staleDataThreshold
 		}
 
-		if (options.cachedFields && Array.isArray(options.cachedFields) && options.cachedFields.length > 0) {
+		if (options.comapctDelay) {
+			this.opts.comapctDelay = options.comapctDelay
+		}
+
+		if (
+			options.cachedFields &&
+			Array.isArray(options.cachedFields) &&
+			options.cachedFields.length > 0
+		) {
 			this.opts.cachedFields = []
 		}
 
@@ -155,16 +176,19 @@ export class JsDb {
 
 	/**
 	 * Open the database for usage.
-	 * This method must be called before any other method. If the database is already
-	 * open, it will throw an error as it reopening the database multiple times can lead
-	 * to data corruption. If the database does not exist, it will be created.
+	 * This method must be called before any other method. If the database is
+	 * already open, it will throw an error as it reopening the database multiple
+	 * times can lead to data corruption. If the database does not exist, it
+	 * will be created.
 	 * @throws Error if the database is already open
 	 */
 	async open() {
 		if (this.opened) {
 			throw new Error('database already open', {
 				cause:
-					'The database is already open. Ensure that is database is only opened once as opening it multiple times can lead to data corruption.',
+					'The database is already open. Ensure that is database is' +
+					'only opened once as opening it multiple times can lead to' +
+					'data corruption.',
 			})
 		}
 
@@ -177,7 +201,11 @@ export class JsDb {
 				return path.join(this.opts.dirPath, file)
 			})
 
-		const maps = await Promise.all(files.map((pageFile) => readPageFile(pageFile, 'append', this.opts.cachedFields)))
+		const maps = await Promise.all(
+			files.map((pageFile) =>
+				readPageFile(pageFile, 'append', this.opts.cachedFields),
+			),
+		)
 
 		// merge the maps
 		mergePageMaps(this.map, ...maps)
@@ -209,6 +237,30 @@ export class JsDb {
 		}
 		this.sequence = seqNumber
 
+		// create various timers
+		// commit the data to disk periodically
+		if (this.opts.dataSyncDelay !== -1) {
+			this.timers.push(
+				setInterval(async () => {
+					await Promise.all(this.pages.map((page) => page.handle.datasync()))
+					await this.deletePage?.handle.datasync()
+				}, this.opts.dataSyncDelay),
+			)
+		}
+
+		// compact the pages periodically
+		this.timers.push(
+			setInterval(() => {
+				const page = this.pages.find(
+					(page) =>
+						page.size > this.opts.maxPageSize * this.opts.staleDataThreshold,
+				)
+				if (page) {
+					compactPage(this.map, this.pages, page)
+				}
+			}, this.opts.comapctDelay),
+		)
+
 		// finally open the database for usage
 		this.opened = true
 	}
@@ -224,6 +276,11 @@ export class JsDb {
 		this.pages = []
 		this.deletePage = undefined
 		this.map.clear()
+		// clear all the timers to avoid memory leaks
+		for (const timer of this.timers) {
+			clearInterval(timer)
+		}
+		this.timers = []
 		this.opened = false
 	}
 
@@ -283,14 +340,23 @@ export class JsDb {
 
 		value.id = id
 
-		const page = await getfreePage(this.pages, this.opts.maxPageSize, this.lastUsedPageIdx, this.opts.dirPath)
+		const page = await getfreePage(
+			this.pages,
+			this.opts.maxPageSize,
+			this.lastUsedPageIdx,
+			this.opts.dirPath,
+		)
 
 		// write the value to the page
 		const offset = page.size
 		this.sequence++
 		value._seq = this.sequence
 		const jsonStr = `${JSON.stringify(value)}\n`
-		const bytesWritten = await writeValue(page.handle, Buffer.from(jsonStr))
+		const bytesWritten = await writeValue(
+			page.handle,
+			Buffer.from(jsonStr),
+			this.opts.dataSyncDelay === -1,
+		)
 
 		// update the page size for book keeping
 		page.size += bytesWritten
@@ -324,7 +390,11 @@ export class JsDb {
 		// write the value to the page
 		const sequence = ++this.sequence
 		const jsonStr = `${JSON.stringify({ id, _seq: sequence })}\n`
-		await writeValue(this.deletePage.handle, Buffer.from(jsonStr))
+		await writeValue(
+			this.deletePage.handle,
+			Buffer.from(jsonStr),
+			this.opts.dataSyncDelay === -1,
+		)
 
 		// Mark the entry as deleted. In case of of deleted entry we are not tracking the size
 		// of the new entry so out calculation will be slightly off but in the grand scheme of
@@ -337,7 +407,8 @@ export class JsDb {
 	private isOpen(): asserts this is { deletePage: Page } {
 		if (!this.opened) {
 			throw new Error('db not open', {
-				cause: 'The database is not open. Call open() before using the database.',
+				cause:
+					'The database is not open. Call open() before using the database.',
 			})
 		}
 	}

@@ -169,9 +169,9 @@ export async function readValue(page: Page, offset: number, length: number): Pro
 }
 
 // write a value to the end of the page
-export async function writeValue(handle: FileHandle, buffer: Buffer): Promise<number> {
+export async function writeValue(handle: FileHandle, buffer: Buffer, sync: boolean): Promise<number> {
 	const written = await handle.write(buffer, 0, buffer.length, -1)
-	// TODO: await page.handle.datasync()
+	sync && (await handle.datasync())
 	return written.bytesWritten
 }
 
@@ -208,7 +208,7 @@ export async function compactPage(map: Map<string, MapEntry>, pages: Page[], pag
 		for (const [id, entry] of map.entries()) {
 			if (entry.pageId === page.pageId) {
 				const oldValue = await page.handle.read(Buffer.alloc(entry.size), 0, entry.size, entry.offset)
-				const written = await writeValue(newPageHandle, oldValue.buffer)
+				const written = await writeValue(newPageHandle, oldValue.buffer, false)
 
 				// we can increment the sequence number here but we are not doing it
 				// as the sequence number can also be used for optimistic updates. If the sequence
