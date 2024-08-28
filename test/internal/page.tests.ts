@@ -1,6 +1,11 @@
 import { vol } from 'memfs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { openOrCreatePageFile, readLines, readPageFile, readValue } from '../../internal/page'
+import {
+	openOrCreatePageFile,
+	readLines,
+	readPageFile,
+	readValue,
+} from '../../internal/page'
 import { words } from '../helpers.mjs'
 
 vi.mock('node:fs')
@@ -78,12 +83,16 @@ describe('readLines', () => {
 		})
 
 		const filePath = './test'
-		expect(readLines(filePath, () => {}, 12)).rejects.toThrow('Empty line in file:./test')
+		expect(readLines(filePath, () => {}, 12)).rejects.toThrow(
+			'Empty line in file:./test',
+		)
 	})
 
 	it('non existing file will throw error', async () => {
 		const filePath = './test1'
-		expect(readLines(filePath, () => {}, 12)).rejects.toThrow("ENOENT: no such file or directory, open './test1'")
+		expect(readLines(filePath, () => {}, 12)).rejects.toThrow(
+			"ENOENT: no such file or directory, open './test1'",
+		)
 	})
 
 	it('offset with unicode characters are correct', async () => {
@@ -105,7 +114,9 @@ describe('readLines', () => {
 
 	it('read a JSON newline file with unicode character', async () => {
 		const fileContent = words
-			.map((word, i) => JSON.stringify({ id: i.toString(), name: word, _seq: i }))
+			.map((word, i) =>
+				JSON.stringify({ id: i.toString(), name: word, _seq: i }),
+			)
 			.join('\n')
 			.concat('\n')
 
@@ -192,9 +203,36 @@ describe('readPageFile', () => {
 		const result = await readPageFile('./0.page', 'append', ['name'])
 		expect(result).toEqual(
 			new Map([
-				['1000', { _seq: 4, offset: 110, size: 37, pageId: '0.page', cache: { name: 'Smith' } }],
-				['1001', { _seq: 2, offset: 37, size: 35, pageId: '0.page', cache: { name: 'Doe' } }],
-				['1002', { _seq: 3, offset: 73, size: 36, pageId: '0.page', cache: { name: 'Jane' } }],
+				[
+					'1000',
+					{
+						_seq: 4,
+						offset: 110,
+						size: 37,
+						pageId: '0.page',
+						cache: { name: 'Smith' },
+					},
+				],
+				[
+					'1001',
+					{
+						_seq: 2,
+						offset: 37,
+						size: 35,
+						pageId: '0.page',
+						cache: { name: 'Doe' },
+					},
+				],
+				[
+					'1002',
+					{
+						_seq: 3,
+						offset: 73,
+						size: 36,
+						pageId: '0.page',
+						cache: { name: 'Jane' },
+					},
+				],
 			]),
 		)
 	})
@@ -208,7 +246,8 @@ describe('readPageFile', () => {
 		expect(readPageFile(filePath, 'delete')).rejects.toThrowError(
 			expect.objectContaining({
 				message: 'Invalid JSON entry in ./test at lineNo:2',
-				cause: "Expected ',' or '}' after property value in JSON at position 21",
+				cause:
+					"Expected ',' or '}' after property value in JSON at position 21",
 			}),
 		)
 	})
@@ -266,12 +305,16 @@ describe('readPageFile', () => {
 	})
 
 	it('should throw error for non existing file', async () => {
-		expect(readPageFile('./test', 'delete')).rejects.toThrow("ENOENT: no such file or directory, open './test'")
+		expect(readPageFile('./test', 'delete')).rejects.toThrow(
+			"ENOENT: no such file or directory, open './test'",
+		)
 	})
 
 	it('round trip test', async () => {
 		const fileContent = words
-			.map((word, i) => JSON.stringify({ id: i.toString(), name: word, _seq: i }))
+			.map((word, i) =>
+				JSON.stringify({ id: i.toString(), name: word, _seq: i }),
+			)
 			.join('\n')
 			.concat('\n')
 
@@ -285,8 +328,12 @@ describe('readPageFile', () => {
 		const contentBuffer = Buffer.from(fileContent)
 		// check that the reported offsets and sizes are correct
 		for (const [id, entry] of result) {
-			const line = contentBuffer.subarray(entry.offset, entry.offset + entry.size).toString()
-			expect(line).toContain(JSON.stringify({ id: id, name: words[entry._seq], _seq: entry._seq }))
+			const line = contentBuffer
+				.subarray(entry.offset, entry.offset + entry.size)
+				.toString()
+			expect(line).toContain(
+				JSON.stringify({ id: id, name: words[entry._seq], _seq: entry._seq }),
+			)
 		}
 
 		const page = await openOrCreatePageFile('./0.page')

@@ -10,14 +10,23 @@ import type { MapEntry, Page } from './types.js'
  * @param lastUsedPageIdx page number of the last used page
  * @returns a page that can be used for writing or undefined if no page is available
  */
-function findFreePage(pages: Page[], maxPageSize: number, lastUsedPageIdx: number): Page | undefined {
+function findFreePage(
+	pages: Page[],
+	maxPageSize: number,
+	lastUsedPageIdx: number,
+): Page | undefined {
 	// NOTE: for loop with cached length is faster than other methods like for of etc. The below code is
 	// in the hot path.
 	const length = pages.length
-	const startIdx = lastUsedPageIdx >= 0 && lastUsedPageIdx < length ? lastUsedPageIdx + 1 : 0
+	const startIdx =
+		lastUsedPageIdx >= 0 && lastUsedPageIdx < length ? lastUsedPageIdx + 1 : 0
 	for (let i = startIdx; i < length; i++) {
 		// @ts-ignore - pages[i] can't be undefined as we are iterating over the array after checking its length
-		if (!pages[i].locked && pages[i].pageId !== lastUsedPageIdx && pages[i].size < maxPageSize) {
+		if (
+			!pages[i].locked &&
+			pages[i].pageId !== lastUsedPageIdx &&
+			pages[i].size < maxPageSize
+		) {
 			return pages[i]
 		}
 	}
@@ -56,7 +65,10 @@ export async function getfreePage(
  * @param target The target map to merge into
  * @param maps The maps to merge
  */
-export function mergePageMaps(target: Map<string, MapEntry>, ...maps: Map<string, MapEntry>[]) {
+export function mergePageMaps(
+	target: Map<string, MapEntry>,
+	...maps: Map<string, MapEntry>[]
+) {
 	if (maps.length === 0) {
 		return
 	}
@@ -78,7 +90,10 @@ export function mergePageMaps(target: Map<string, MapEntry>, ...maps: Map<string
  * Remove all entries that have a delete operation.
  * @param target The target map to remove entries from
  */
-export function removeDeletedEntires(target: Map<string, MapEntry>, deleteMap: Map<string, number>) {
+export function removeDeletedEntires(
+	target: Map<string, MapEntry>,
+	deleteMap: Map<string, number>,
+) {
 	for (const [key, value] of deleteMap) {
 		const existing = target.get(key)
 		if (existing) {
@@ -118,14 +133,20 @@ export function calculateStaleBytes(pages: Page[], map: Map<string, MapEntry>) {
  * @param pages The pages to update
  * @param map The map of entries
  */
-export function updateStaleBytes(id: string, pages: Page[], map: Map<string, MapEntry>) {
+export function updateStaleBytes(
+	id: string,
+	pages: Page[],
+	map: Map<string, MapEntry>,
+) {
 	const existingEntry = map.get(id)
 	if (existingEntry) {
 		const existingPage = pages.find((p) => p.pageId === existingEntry.pageId)
 		if (existingPage) {
 			existingPage.staleBytes += existingEntry.size
 		} else {
-			throw new Error('INTERNAL:Page not found. We have a page entry but the page is missing.')
+			throw new Error(
+				'INTERNAL:Page not found. We have a page entry but the page is missing.',
+			)
 		}
 	}
 }

@@ -11,5 +11,9 @@
     },
     "[javascript]": {
         "editor.defaultFormatter": "biomejs.biome"
-    }
+    },
+    "editor.rulers": [
+        80,
+        100
+    ]
 }

@@ -11,7 +11,10 @@ import { generateId } from './utils.js'
  * @param extension extension of the file (default 'page')
  * @returns a page object
  */
-export async function openOrCreatePageFile(pagePath: string, extension: 'page' | 'tmp' = 'page'): Promise<Page> {
+export async function openOrCreatePageFile(
+	pagePath: string,
+	extension: 'page' | 'tmp' = 'page',
+): Promise<Page> {
 	const handle = await open(pagePath, 'a+')
 	const stats = await handle.stat()
 	return {
@@ -27,7 +30,10 @@ export async function openOrCreatePageFile(pagePath: string, extension: 'page' |
 	}
 }
 
-export async function readPageFile(filePath: string, pageType: 'delete'): Promise<Map<string, number>>
+export async function readPageFile(
+	filePath: string,
+	pageType: 'delete',
+): Promise<Map<string, number>>
 export async function readPageFile(
 	filePath: string,
 	pageType: 'append',
@@ -109,7 +115,12 @@ export async function readPageFile<T>(
  */
 export async function readLines(
 	filePath: string,
-	processLine: (buffer: Buffer, offset: number, size: number, lineNo: number) => void,
+	processLine: (
+		buffer: Buffer,
+		offset: number,
+		size: number,
+		lineNo: number,
+	) => void,
 	bufferSize = 1024,
 	breakChar = '\n',
 ): Promise<void> {
@@ -126,7 +137,10 @@ export async function readLines(
 		// we assume that the file will always end with a break character
 		// so the last record is ignored if it doesn't end with a break character
 		while (b.bytesRead !== 0) {
-			const concatBuffer = Buffer.concat([remaining, b.buffer.subarray(0, b.bytesRead)])
+			const concatBuffer = Buffer.concat([
+				remaining,
+				b.buffer.subarray(0, b.bytesRead),
+			])
 			let start = 0
 			let posBreakChar = concatBuffer.indexOf(breakCharCode, start)
 			while (posBreakChar !== -1) {
@@ -163,13 +177,21 @@ export async function readLines(
 	}
 }
 
-export async function readValue(page: Page, offset: number, length: number): Promise<unknown> {
+export async function readValue(
+	page: Page,
+	offset: number,
+	length: number,
+): Promise<unknown> {
 	const value = await page.handle.read(Buffer.alloc(length), 0, length, offset)
 	return JSON.parse(value.buffer.toString())
 }
 
 // write a value to the end of the page
-export async function writeValue(handle: FileHandle, buffer: Buffer, sync: boolean): Promise<number> {
+export async function writeValue(
+	handle: FileHandle,
+	buffer: Buffer,
+	sync: boolean,
+): Promise<number> {
 	const written = await handle.write(buffer, 0, buffer.length, -1)
 	sync && (await handle.datasync())
 	return written.bytesWritten
@@ -191,7 +213,11 @@ export async function writeValue(handle: FileHandle, buffer: Buffer, sync: boole
  * @param pages The list of pages in the database
  * @param page The page to compact
  */
-export async function compactPage(map: Map<string, MapEntry>, pages: Page[], page: Page): Promise<void> {
+export async function compactPage(
+	map: Map<string, MapEntry>,
+	pages: Page[],
+	page: Page,
+): Promise<void> {
 	if (page.locked) {
 		throw new Error('Page is already locked')
 	}
@@ -207,7 +233,12 @@ export async function compactPage(map: Map<string, MapEntry>, pages: Page[], pag
 	try {
 		for (const [id, entry] of map.entries()) {
 			if (entry.pageId === page.pageId) {
-				const oldValue = await page.handle.read(Buffer.alloc(entry.size), 0, entry.size, entry.offset)
+				const oldValue = await page.handle.read(
+					Buffer.alloc(entry.size),
+					0,
+					entry.size,
+					entry.offset,
+				)
 				const written = await writeValue(newPageHandle, oldValue.buffer, false)
 
 				// we can increment the sequence number here but we are not doing it

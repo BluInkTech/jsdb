@@ -33,14 +33,22 @@ describe('High volume tests', () => {
 
 	it('add entries', async () => {
 		for (let i = 0; i < entries; i++) {
-			await db.set(i.toString(), { id: i.toString(), word: words[i % 100], sentence: sentences[i % 100] })
+			await db.set(i.toString(), {
+				id: i.toString(),
+				word: words[i % 100],
+				sentence: sentences[i % 100],
+			})
 		}
 	})
 
 	it('get entries', async () => {
 		for (let i = 0; i < entries; i++) {
 			const entry = await db.get(i.toString())
-			assert.deepEqual(entry, { id: i.toString(), word: words[i % 100], sentence: sentences[i % 100] })
+			assert.deepEqual(entry, {
+				id: i.toString(),
+				word: words[i % 100],
+				sentence: sentences[i % 100],
+			})
 		}
 	})
 
@@ -51,7 +59,11 @@ describe('High volume tests', () => {
 		// check if the entries are still there
 		for (let i = 0; i < entries; i++) {
 			const entry = await db.get(i.toString())
-			assert.deepEqual(entry, { id: i.toString(), word: words[i % 100], sentence: sentences[i % 100] })
+			assert.deepEqual(entry, {
+				id: i.toString(),
+				word: words[i % 100],
+				sentence: sentences[i % 100],
+			})
 		}
 	})
 })

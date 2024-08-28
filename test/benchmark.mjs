@@ -22,10 +22,17 @@ const records = [
 	{ name: '🥖baguette', color: 'brown' },
 ]
 function printPerf(perfName, count) {
-	const perf = performance.measure(perfName, `${perfName}-start`, `${perfName}-end`)
+	const perf = performance.measure(
+		perfName,
+		`${perfName}-start`,
+		`${perfName}-end`,
+	)
 	const totalDurationInSeconds = perf.duration / 1000 // Convert milliseconds to seconds
 	const entriesPerSecond = count / totalDurationInSeconds
-	console.log(`✔  ${perfName} per second`.padEnd(40, '.'), entriesPerSecond.toFixed(3))
+	console.log(
+		`✔  ${perfName} per second`.padEnd(40, '.'),
+		entriesPerSecond.toFixed(3),
+	)
 }
 
 const recordCount = 50000

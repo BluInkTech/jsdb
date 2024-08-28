@@ -1,8 +1,17 @@
 {
 	"$schema": "https://biomejs.dev/schemas/1.8.3/schema.json",
+	"files": {
+		"ignore": [
+			"dist/*.*",
+			"node_modules/*.*",
+			"coverage/*.*",
+			"coverage-report/*.*",
+			".vscode"
+		]
+	},
 	"formatter": {
 		"enabled": true,
-		"lineWidth": 120,
+		"lineWidth": 80,
 		"indentWidth": 2,
 		"indentStyle": "tab"
 	},
@@ -31,12 +40,9 @@
 			"bracketSpacing": true
 		}
 	},
-	"overrides": [
-		{
-			"include": [
-				"*.json"
-			],
-			"formatter": {}
+	"json": {
+		"parser": {
+			"allowComments": true
 		}
-	]
+	}
 }

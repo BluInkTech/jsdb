@@ -146,7 +146,10 @@ export const words = [
 ]
 
 export const getTempDir = () => {
-	const tempDir = path.join(os.tmpdir(), Math.random().toString(36).substring(7))
+	const tempDir = path.join(
+		os.tmpdir(),
+		Math.random().toString(36).substring(7),
+	)
 	mkdirSync(tempDir, { recursive: true })
 	return tempDir
 }
