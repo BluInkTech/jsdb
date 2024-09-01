@@ -1,8 +1,14 @@
-import { JsDb } from '../dist/index.js'
-import { deleteTempDir, getTempDir } from './helpers.mjs'
+import { rmSync } from 'node:fs'
+// import { fs, vol } from 'memfs'
+// import { bench, vi } from 'vitest'
+import { openDb } from '../index.js'
+import { getTempDir, printDirStats } from './helpers.js'
 
-const db = new JsDb({ dirPath: getTempDir() })
-await db.open()
+// vi.mock('node:fs')
+// vi.mock('node:fs/promises')
+// vol.reset()
+const dir = getTempDir()
+let db = await openDb({ dirPath: dir })
 
 // create test records
 const records = [
@@ -35,14 +41,16 @@ function printPerf(perfName, count) {
 	)
 }
 
-const recordCount = 50000
+const recordCount = 500
 performance.mark('add-records-start')
 for (let i = 0; i < recordCount; i++) {
-	//  we don't want to have a static record as V8 is some how optimizing it
 	await db.set(i.toString(), records[i % records.length])
 }
 performance.mark('add-records-end')
 printPerf('add-records', recordCount)
+
+await db.close()
+db = await openDb({ dirPath: dir })
 
 performance.mark('get-records-start')
 for (let i = 0; i < recordCount; i++) {
@@ -53,7 +61,7 @@ printPerf('get-records', recordCount)
 
 performance.mark('exists-records-start')
 for (let i = 0; i < recordCount; i++) {
-	db.exists(i.toString())
+	db.has(i.toString())
 }
 performance.mark('exists-records-end')
 printPerf('exists-records', recordCount)
@@ -66,5 +74,6 @@ performance.mark('delete-records-end')
 printPerf('delete-records', recordCount)
 
 await db.close()
+printDirStats(dir)
 
-deleteTempDir(db.options.dirPath)
+rmSync(dir, { recursive: true, force: true })

@@ -1,25 +1,47 @@
 import { type FileHandle, open, rename } from 'node:fs/promises'
 import path from 'node:path'
 import type { Idable } from '../index.js'
-import { mergePageMaps } from './pages.js'
-import type { MapEntry, Page } from './types.js'
-import { generateId } from './utils.js'
+import { mergePageMaps } from './pagegroup.js'
+import { debounce, generateId } from './utils.js'
+
+/**
+ * A page represents a file in the database. Each page is
+ * a self contained database.
+ * @internal
+ */
+export type Page = {
+	fileName: string
+	pageId: string
+	locked: boolean
+	handle: FileHandle
+	size: number
+	staleBytes: number
+	close: () => Promise<void>
+}
+
+/**
+ * Contains the information of a map entry.
+ * @internal
+ */
+export type MapEntry = {
+	pageId: string // file identifier
+	offset: number // offset
+	size: number // size
+	_seq: number // sequence number
+	cache?: unknown // inline data used for fast access
+}
 
 /**
  * Open a page file for reading and writing. If the file does not exist, it will be created.
  * @param pagePath full path to the file
- * @param extension extension of the file (default 'page')
  * @returns a page object
  */
-export async function openOrCreatePageFile(
-	pagePath: string,
-	extension: 'page' | 'tmp' = 'page',
-): Promise<Page> {
+export async function openOrCreatePageFile(pagePath: string): Promise<Page> {
 	const handle = await open(pagePath, 'a+')
 	const stats = await handle.stat()
 	return {
 		fileName: pagePath,
-		pageId: path.basename(pagePath, `.${extension}`),
+		pageId: path.basename(pagePath),
 		locked: false,
 		handle,
 		size: stats.size,
@@ -30,16 +52,6 @@ export async function openOrCreatePageFile(
 	}
 }
 
-export async function readPageFile(
-	filePath: string,
-	pageType: 'delete',
-): Promise<Map<string, number>>
-export async function readPageFile(
-	filePath: string,
-	pageType: 'append',
-	cacheFields?: string[],
-): Promise<Map<string, MapEntry>>
-
 /**
  * Read a JSON new line file and return a map of entries.
  * @param filePath full path to the file
@@ -48,14 +60,13 @@ export async function readPageFile(
  * @cacheFields fields to cache in memory
  * @returns a map of entries
  */
-export async function readPageFile<T>(
+export async function readPageFile(
 	filePath: string,
-	pageType: 'delete' | 'append',
 	cacheFields?: string[],
-): Promise<Map<string, T>> {
+): Promise<Map<string, MapEntry>> {
 	const pageId = path.basename(filePath)
 
-	const map = new Map<string, T>()
+	const map = new Map<string, MapEntry>()
 	await readLines(filePath, (buffer, offset, size, lineNo) => {
 		try {
 			const json = JSON.parse(buffer.toString('utf-8')) as Idable
@@ -71,12 +82,6 @@ export async function readPageFile<T>(
 			// sequence number should be a number
 			if (typeof json._seq !== 'number') {
 				throw new Error('_seq must be a number')
-			}
-
-			// in case of a delete page type we only need the sequence number
-			if (pageType === 'delete') {
-				map.set(json.id, json._seq as unknown as T)
-				return
 			}
 
 			const entry: MapEntry = {
@@ -96,7 +101,7 @@ export async function readPageFile<T>(
 				entry.cache = cache
 			}
 
-			map.set(json.id, entry as T)
+			map.set(json.id, entry)
 		} catch (error) {
 			throw new Error(`Invalid JSON entry in ${filePath} at lineNo:${lineNo}`, {
 				cause: (error as Error).message,
@@ -188,12 +193,21 @@ export async function readValue(
 
 // write a value to the end of the page
 export async function writeValue(
-	handle: FileHandle,
+	page: Page,
 	buffer: Buffer,
-	sync: boolean,
+	sync: number,
 ): Promise<number> {
-	const written = await handle.write(buffer, 0, buffer.length, -1)
-	sync && (await handle.datasync())
+	const written = await page.handle.write(buffer, 0, buffer.length, -1)
+
+	// Debounce the datasync operation to avoid frequent disk writes
+	if (sync === 0) {
+		await page.handle.datasync()
+	} else {
+		debounce(() => page.handle.datasync, sync)()
+	}
+
+	// update the size of the page
+	page.size += written.bytesWritten
 	return written.bytesWritten
 }
 
@@ -239,7 +253,12 @@ export async function compactPage(
 					entry.size,
 					entry.offset,
 				)
-				const written = await writeValue(newPageHandle, oldValue.buffer, false)
+				const written = await newPageHandle.write(
+					oldValue.buffer,
+					0,
+					oldValue.buffer.length,
+					-1,
+				)
 
 				// we can increment the sequence number here but we are not doing it
 				// as the sequence number can also be used for optimistic updates. If the sequence
@@ -248,10 +267,10 @@ export async function compactPage(
 				// Every page compaction should not invalidate the user cache.
 				newMap.set(id, {
 					...entry,
-					offset: written,
+					offset: written.bytesWritten,
 					pageId: newPageId,
 				})
-				size += written
+				size += written.bytesWritten
 			}
 		}
 	} finally {

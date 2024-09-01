@@ -1,7 +1,9 @@
-import assert from 'node:assert/strict'
-import { after, before, describe, it } from 'node:test'
-import { JsDb } from '../index.js'
-import { deleteTempDir, getTempDir, words } from './helpers.mjs'
+import { readdirSync, statSync } from 'node:fs'
+import path from 'node:path'
+import { vol } from 'memfs'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { type JsDb, openDb } from '../index.js'
+import { getTempDir, printDirStats, words } from './helpers.js'
 
 // create random length sentences using the words
 const sentences: Array<string> = []
@@ -14,56 +16,80 @@ for (let i = 0; i < 100; i++) {
 	sentences.push(sentence.join(' '))
 }
 
-const entries = 10000
+const entries = 5000
+vi.mock('node:fs')
+vi.mock('node:fs/promises')
+vol.reset()
+const dirPath = '/' //getTempDir()
+describe(
+	'High volume tests',
+	{
+		timeout: 60000,
+	},
+	() => {
+		let db: JsDb
+		beforeAll(async () => {
+			db = await openDb({ dirPath })
+		})
 
-describe('High volume tests', () => {
-	const db = new JsDb({ dirPath: getTempDir() })
-	before(async () => {
-		await assert.doesNotReject(db.open())
-	})
+		it('add entries', async () => {
+			for (let i = 0; i < entries; i++) {
+				await db.set(i.toString(), {
+					id: i.toString(),
+					word: words[i % 100],
+					sentence: sentences[i % 100],
+				})
+			}
+		})
 
-	after(async () => {
-		await assert.doesNotReject(db.close())
-		deleteTempDir(db.options.dirPath)
-	})
+		it('get entries', async () => {
+			for (let i = 0; i < entries; i++) {
+				const entry = await db.get(i.toString())
+				expect(entry).toStrictEqual({
+					_seq: i + 1,
+					id: i.toString(),
+					word: words[i % 100],
+					sentence: sentences[i % 100],
+				})
+			}
+		})
 
-	it('open a new database', async () => {
-		await assert.doesNotReject(db.open())
-	})
+		it('close and reopen the database', async () => {
+			await db.close()
+			db = await openDb({ dirPath })
 
-	it('add entries', async () => {
-		for (let i = 0; i < entries; i++) {
-			await db.set(i.toString(), {
-				id: i.toString(),
-				word: words[i % 100],
-				sentence: sentences[i % 100],
-			})
-		}
-	})
+			// check if the entries are still there
+			for (let i = 0; i < entries; i++) {
+				const entry = await db.get(i.toString())
+				expect(entry).toStrictEqual({
+					_seq: i + 1,
+					id: i.toString(),
+					word: words[i % 100],
+					sentence: sentences[i % 100],
+				})
+			}
+		})
 
-	it('get entries', async () => {
-		for (let i = 0; i < entries; i++) {
-			const entry = await db.get(i.toString())
-			assert.deepEqual(entry, {
-				id: i.toString(),
-				word: words[i % 100],
-				sentence: sentences[i % 100],
-			})
-		}
-	})
+		it('delete entries', async () => {
+			for (let i = 0; i < entries; i++) {
+				await db.delete(i.toString())
+				expect(await db.get(i.toString())).toBeUndefined()
+			}
+		})
 
-	it('close and reopen the database', async () => {
-		await db.close()
-		await db.open()
+		it('close and reopen the database to verify deleted entries', async () => {
+			await db.close()
+			db = await openDb({ dirPath })
 
-		// check if the entries are still there
-		for (let i = 0; i < entries; i++) {
-			const entry = await db.get(i.toString())
-			assert.deepEqual(entry, {
-				id: i.toString(),
-				word: words[i % 100],
-				sentence: sentences[i % 100],
-			})
-		}
-	})
-})
+			for (let i = 0; i < entries; i++) {
+				await db.delete(i.toString())
+				expect(await db.get(i.toString())).toBeUndefined()
+			}
+		})
+
+		it('print directory stats', async () => {
+			await db.close()
+			printDirStats(dirPath)
+		})
+	},
+)

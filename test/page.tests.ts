@@ -5,8 +5,8 @@ import {
 	readLines,
 	readPageFile,
 	readValue,
-} from '../../internal/page'
-import { words } from '../helpers.mjs'
+} from '../internal/page.js'
+import { words } from './helpers.js'
 
 vi.mock('node:fs')
 vi.mock('node:fs/promises')
@@ -115,7 +115,12 @@ describe('readLines', () => {
 	it('read a JSON newline file with unicode character', async () => {
 		const fileContent = words
 			.map((word, i) =>
-				JSON.stringify({ id: i.toString(), name: word, _seq: i }),
+				JSON.stringify({
+					id: i.toString(),
+					name: word,
+					color: 'yellow',
+					_seq: i,
+				}),
 			)
 			.join('\n')
 			.concat('\n')
@@ -130,6 +135,7 @@ describe('readLines', () => {
 			expect(JSON.parse(line)).toEqual({
 				id: i.toString(),
 				name: words[i],
+				color: 'yellow',
 				_seq: i,
 			})
 
@@ -165,27 +171,12 @@ describe('readPageFile', () => {
 		vol.reset()
 	})
 
-	it('should read a delete log page file', async () => {
-		vol.fromJSON({
-			'./test': `{"id":"1000","_seq":1}\n{"id":"1001","_seq":2}\n{"id":"1002","_seq":3}\n{"id":"1000","_seq":4}\n`,
-		})
-
-		const result = await readPageFile('./test', 'delete')
-		expect(result).toEqual(
-			new Map([
-				['1000', 4],
-				['1001', 2],
-				['1002', 3],
-			]),
-		)
-	})
-
-	it('should read an append log page file', async () => {
+	it('should read a page file', async () => {
 		vol.fromJSON({
 			'./0.page': `{"id":"1000","_seq":1}\n{"id":"1001","_seq":2}\n{"id":"1002","_seq":3}\n{"id":"1000","_seq":4}\n`,
 		})
 
-		const result = await readPageFile('./0.page', 'append')
+		const result = await readPageFile('./0.page')
 		expect(result).toEqual(
 			new Map([
 				['1000', { _seq: 4, offset: 69, size: 22, pageId: '0.page' }],
@@ -195,12 +186,12 @@ describe('readPageFile', () => {
 		)
 	})
 
-	it('should read an append log page file with cache fields', async () => {
+	it('should read a page file with cache fields', async () => {
 		vol.fromJSON({
 			'./0.page': `{"id":"1000","_seq":1,"name":"John"}\n{"id":"1001","_seq":2,"name":"Doe"}\n{"id":"1002","_seq":3,"name":"Jane"}\n{"id":"1000","_seq":4,"name":"Smith"}\n`,
 		})
 
-		const result = await readPageFile('./0.page', 'append', ['name'])
+		const result = await readPageFile('./0.page', ['name'])
 		expect(result).toEqual(
 			new Map([
 				[
@@ -243,7 +234,7 @@ describe('readPageFile', () => {
 		})
 
 		const filePath = './test'
-		expect(readPageFile(filePath, 'delete')).rejects.toThrowError(
+		expect(readPageFile(filePath)).rejects.toThrowError(
 			expect.objectContaining({
 				message: 'Invalid JSON entry in ./test at lineNo:2',
 				cause:
@@ -257,7 +248,7 @@ describe('readPageFile', () => {
 			'./test': `{"id":1000,"_seq":1}\n`,
 		})
 
-		expect(readPageFile('./test', 'delete')).rejects.toThrowError(
+		expect(readPageFile('./test')).rejects.toThrowError(
 			expect.objectContaining({
 				message: 'Invalid JSON entry in ./test at lineNo:1',
 				cause: 'id must be a string',
@@ -270,7 +261,7 @@ describe('readPageFile', () => {
 			'./test': `{"id":"1000","_seq":"1"}\n`,
 		})
 
-		expect(readPageFile('./test', 'delete')).rejects.toThrowError(
+		expect(readPageFile('./test')).rejects.toThrowError(
 			expect.objectContaining({
 				message: 'Invalid JSON entry in ./test at lineNo:1',
 				cause: '_seq must be a number',
@@ -283,7 +274,7 @@ describe('readPageFile', () => {
 			'./test': `{"_seq":1}\n`,
 		})
 
-		expect(readPageFile('./test', 'delete')).rejects.toThrowError(
+		expect(readPageFile('./test')).rejects.toThrowError(
 			expect.objectContaining({
 				message: 'Invalid JSON entry in ./test at lineNo:1',
 				cause: 'id and _seq are required fields',
@@ -296,7 +287,7 @@ describe('readPageFile', () => {
 			'./test': `{"id":"1000"}\n`,
 		})
 
-		expect(readPageFile('./test', 'delete')).rejects.toThrowError(
+		expect(readPageFile('./test')).rejects.toThrowError(
 			expect.objectContaining({
 				message: 'Invalid JSON entry in ./test at lineNo:1',
 				cause: 'id and _seq are required fields',
@@ -305,7 +296,7 @@ describe('readPageFile', () => {
 	})
 
 	it('should throw error for non existing file', async () => {
-		expect(readPageFile('./test', 'delete')).rejects.toThrow(
+		expect(readPageFile('./test')).rejects.toThrow(
 			"ENOENT: no such file or directory, open './test'",
 		)
 	})
@@ -322,7 +313,7 @@ describe('readPageFile', () => {
 			'./0.page': fileContent,
 		})
 
-		const result = await readPageFile('./0.page', 'append', 0)
+		const result = await readPageFile('./0.page')
 		expect(result.size).toBe(words.length)
 
 		const contentBuffer = Buffer.from(fileContent)

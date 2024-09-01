@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -145,6 +145,23 @@ export const words = [
 	'مرحبا',
 ]
 
+export const testRecords = [
+	{ name: '🍋lemon', color: 'yellow' },
+	{ name: '🍓strawberry', color: 'red' },
+	{ name: '🍅tomato', color: 'red' },
+	{ name: '🍆eggplant', color: 'purple' },
+	{ name: '🥦broccoli', color: 'green' },
+	{ name: '🥬lettuce', color: 'green' },
+	{ name: '🥒cucumber', color: 'green' },
+	{ name: '🥕carrot', color: 'orange' },
+	{ name: '🌽corn', color: 'yellow' },
+	{ name: '🌶️pepper', color: 'red' },
+	{ name: '🥔potato', color: 'brown' },
+	{ name: '🍞bread', color: 'brown' },
+	{ name: '🥐croissant', color: 'brown' },
+	{ name: '🥖baguette', color: 'brown' },
+]
+
 export const getTempDir = () => {
 	const tempDir = path.join(
 		os.tmpdir(),
@@ -156,4 +173,16 @@ export const getTempDir = () => {
 
 export const deleteTempDir = (dirPath) => {
 	rmSync(dirPath, { recursive: true, force: true })
+}
+
+export const printDirStats = (dir) => {
+	console.log()
+	console.log(`Directory: ${dir}`)
+	// print directory stats and file list along with sizes
+	for (const file of readdirSync(dir)) {
+		const stats = statSync(path.join(dir, file))
+		console.log(
+			`${file.padEnd(30, '.')} ${(stats.size / 1024).toLocaleString()} Kb`,
+		)
+	}
 }
