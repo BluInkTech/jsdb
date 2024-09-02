@@ -60,16 +60,17 @@ export type JsDbOptions = {
 
 	/**
 	 * The delay in milliseconds before the data is synced to disk. The default is
-	 * 15s. This is useful for reducing the number of disk writes. The data is
+	 * 1000 ms. This is useful for reducing the number of disk writes. The data is
 	 * still written to the file handle but the file handle is not flushed to disk.
-	 * Set it to -1 to sync after every write. A setting of -1 will drastically reduce
-	 * the performance of the database but will provide maximum relaibility. In case
+	 * Set it to -1 to sync after every write. A setting of -1 will reduce the
+	 * performance of the database but will provide maximum relaibility. In case
 	 * of a crash, the data will be lost if the data is not synced to disk.
 	 *
 	 * The delay value is a soft limit and it is possible for the data to be synced
 	 * to disk before or after the delay is reached. In case the Db is under heavy
 	 * load, the data will be synced to disk as soon as possible to avoid slow down.
-	 * In technical terms we use the delay as debounce value.
+	 * In technical terms we use the delay as debounce value and not a throttle value.
+	 * It is done to handle large burst of writes.
 	 *
 	 * The data is always synced to disk when the db is closed or automatically by
 	 * the platform if the buffer is full.
