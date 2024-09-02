@@ -243,8 +243,20 @@ async function close(state: DbState): Promise<void> {
 		clearInterval(timer)
 	}
 
-	await Promise.all(state.data.pages.map((page) => page.close()))
-	await Promise.all(state.logs.pages.map((page) => page.close()))
+	await Promise.all(
+		state.data.pages.map((page) => {
+			// lock the page before closing so that timers holding on
+			// to the page reference do not perform any operation on the page
+			page.locked = true
+			page.close()
+		}),
+	)
+	await Promise.all(
+		state.logs.pages.map((page) => {
+			page.locked = true
+			page.close()
+		}),
+	)
 
 	// reset the state
 	state.data.map.clear()

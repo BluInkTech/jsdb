@@ -203,7 +203,11 @@ export async function writeValue(
 	if (sync === 0) {
 		await page.handle.datasync()
 	} else {
-		debounce(() => page.handle.datasync, sync)()
+		debounce(async () => {
+			if (page.handle && !page.locked) {
+				await page.handle.datasync()
+			}
+		}, sync)()
 	}
 
 	// update the size of the page
