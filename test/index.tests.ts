@@ -1,7 +1,7 @@
 import { vol } from 'memfs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDb } from '../index.js'
-import { printDirStats, testRecords, words } from './helpers.js'
+import { testRecords, words } from './helpers.js'
 
 vi.mock('node:fs')
 vi.mock('node:fs/promises')
@@ -50,7 +50,6 @@ describe('JsDB public interface tests', () => {
 			...testRecords[3],
 		})
 		await db.close()
-		printDirStats('/')
 	})
 
 	it('update an entry', async () => {

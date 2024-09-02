@@ -32,9 +32,18 @@ describe(
 			db = await openDb({ dirPath })
 		})
 
-		it('add entries', async () => {
+		it('add entries and check', async () => {
 			for (let i = 0; i < entries; i++) {
 				await db.set(i.toString(), {
+					id: i.toString(),
+					word: words[i % 100],
+					sentence: sentences[i % 100],
+				})
+
+				// get the entry
+				const entry = await db.get(i.toString())
+				expect(entry).toStrictEqual({
+					_seq: i + 1,
 					id: i.toString(),
 					word: words[i % 100],
 					sentence: sentences[i % 100],
@@ -89,7 +98,6 @@ describe(
 
 		it('print directory stats', async () => {
 			await db.close()
-			printDirStats(dirPath)
 		})
 	},
 )

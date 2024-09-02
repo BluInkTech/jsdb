@@ -1,12 +1,15 @@
 import { vol } from 'memfs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+	type MapEntry,
+	compactPage,
 	openOrCreatePageFile,
 	readLines,
 	readPageFile,
 	readValue,
+	writeValue,
 } from '../internal/page.js'
-import { words } from './helpers.js'
+import { printDirStats, words } from './helpers.js'
 
 vi.mock('node:fs')
 vi.mock('node:fs/promises')
@@ -339,5 +342,297 @@ describe('readPageFile', () => {
 			})
 			i++
 		}
+	})
+})
+
+describe('openOrCreatePageFile', () => {
+	beforeEach(() => {
+		vol.reset()
+		vol.fromJSON({
+			'./empty.temp': '',
+		})
+	})
+
+	it('should create a new page file', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		expect(page.fileName).toBe('./0.page')
+		expect(page.pageId).toBe('0.page')
+		expect(page.size).toBe(0)
+		expect(page.locked).toBe(false)
+		expect(page.closed).toBe(false)
+		expect(page.hasClosed()).toBe(false)
+
+		// check that the file is created
+		expect(vol.existsSync('./0.page')).toBe(true)
+	})
+
+	it('should open an existing page file', async () => {
+		vol.fromJSON({
+			'./0.page': '1234567890\n1234567890\n1234567890\n1234\n',
+		})
+
+		const page = await openOrCreatePageFile('./0.page')
+		expect(page.pageId).toBe('0.page')
+		expect(page.size).toBe(38)
+	})
+
+	it('should throw error for invalid file path', async () => {
+		expect(openOrCreatePageFile('')).rejects.toThrow('EISDIR')
+	})
+
+	it('should close the page', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		expect(page.hasClosed()).toBe(false)
+		// write some data to the file
+		const b = Buffer.from('1234567890\n')
+		await page.handle.write(b, 0, b.length, -1)
+		await page.close()
+		expect(page.hasClosed()).toBe(true)
+
+		// check that the data
+		expect(vol.existsSync('./0.page')).toBe(true)
+		const data = vol.readFileSync('./0.page')
+		expect(data.toString()).toBe('1234567890\n')
+	})
+
+	it('should flush the page', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		expect(page.hasClosed()).toBe(false)
+
+		// write some data to the file
+		const b = Buffer.from('1234567890\n')
+		await page.handle.write(b, 0, b.length, -1)
+		await page.flush()
+		expect(page.hasClosed()).toBe(false)
+
+		// check that the data
+		expect(vol.existsSync('./0.page')).toBe(true)
+		const data = vol.readFileSync('./0.page')
+		expect(data.toString()).toBe('1234567890\n')
+	})
+
+	it('should ignore flush if the file is closed', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		expect(page.hasClosed()).toBe(false)
+
+		// write some data to the file
+		const b = Buffer.from('1234567890\n')
+		await page.handle.write(b, 0, b.length, -1)
+		await page.close()
+		expect(page.hasClosed()).toBe(true)
+
+		// check that the data
+		expect(vol.existsSync('./0.page')).toBe(true)
+		const data = vol.readFileSync('./0.page')
+		expect(data.toString()).toBe('1234567890\n')
+
+		// flush should not throw error
+		expect(page.flush()).resolves.toBeUndefined()
+	})
+
+	it('should ignore close if the file is closed', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		expect(page.hasClosed()).toBe(false)
+
+		// write some data to the file
+		const b = Buffer.from('1234567890\n')
+		await page.handle.write(b, 0, b.length, -1)
+		await page.close()
+		expect(page.hasClosed()).toBe(true)
+
+		// check that the data
+		expect(vol.existsSync('./0.page')).toBe(true)
+		const data = vol.readFileSync('./0.page')
+		expect(data.toString()).toBe('1234567890\n')
+
+		// close should not throw error
+		expect(page.close()).resolves.toBeUndefined()
+	})
+})
+
+describe('writeValue', () => {
+	beforeEach(() => {
+		vol.reset()
+		vol.fromJSON({
+			'./empty.temp': '',
+		})
+	})
+
+	it('should write a value to a page immediately (sync 0)', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		const value = Buffer.from('123\n')
+
+		const written = await writeValue(page, value, 0)
+		expect(written).toBe(4)
+
+		const data = vol.readFileSync('./0.page')
+		expect(data.toString()).toBe('123\n')
+
+		// write another value
+		const value2 = Buffer.from('456\n')
+		const written2 = await writeValue(page, value2, -1)
+		expect(written2).toBe(4)
+
+		const data2 = vol.readFileSync('./0.page')
+		expect(data2.toString()).toBe('123\n456\n')
+	})
+
+	it('should write a value to a page with debounce (sync 100)', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		const value = Buffer.from('123\n')
+		const written = await writeValue(page, value, 100)
+		expect(written).toBe(4)
+
+		// Note: it is difficult to test the below
+		// writeValue function writes data to the file handle, and the data is
+		// likely being cached by the operating system's file system buffers.
+		// The fs.write operation writes data to the file descriptor, but it
+		// doesn't necessarily flush the data to disk immediately.
+		// The data can still be read from the file descriptor even if it hasn't
+		// been flushed to disk.
+		// const emptyFile = vol.readFileSync('./0.page')
+		// expect(emptyFile.toString()).toBe('')
+
+		// wait for the debounce to complete
+		await new Promise((resolve) => setTimeout(resolve, 200))
+
+		const data = vol.readFileSync('./0.page')
+		expect(data.toString()).toBe('123\n')
+
+		await new Promise((resolve) => setTimeout(resolve, 200))
+		// write another value
+		const value2 = Buffer.from('456\n')
+		const written2 = await writeValue(page, value2, 100)
+		expect(written2).toBe(4)
+
+		const data2 = vol.readFileSync('./0.page')
+		expect(data2.toString()).toBe('123\n456\n')
+	})
+})
+
+describe('compactPage', () => {
+	beforeEach(() => {
+		vol.reset()
+		vol.fromJSON({
+			'./empty.temp': '',
+		})
+	})
+
+	it('should compact a page file', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		const value = Buffer.from('{"id":"1","_seq":10}\n')
+		await writeValue(page, value, 0)
+		const value2 = Buffer.from('{"id":"2","_seq":20}\n')
+		await writeValue(page, value2, 0)
+		const value3 = Buffer.from('{"id":"3","_seq":30}\n')
+		await writeValue(page, value3, 0)
+
+		// add the values to the map
+		const map = new Map<string, MapEntry>()
+		map.set('1', {
+			_seq: 10,
+			offset: 0,
+			size: value.byteLength,
+			pageId: '0.page',
+		})
+		map.set('2', {
+			_seq: 20,
+			offset: value.byteLength,
+			size: value2.byteLength,
+			pageId: '0.page',
+		})
+		map.set('3', {
+			_seq: 30,
+			offset: value.byteLength + value2.byteLength,
+			size: value3.byteLength,
+			pageId: '0.page',
+		})
+
+		const result = await readPageFile('./0.page')
+		expect(result.size).toBe(3)
+
+		const pages = [page]
+		// compact the page
+		await compactPage(map, pages, page)
+
+		// after compaction the 0.page file should be renamed to a 0.page.old file
+		expect(vol.existsSync('./0.page')).toBe(false)
+		expect(vol.existsSync('./0.page.old')).toBe(true)
+
+		// pages should not have 0.page
+		expect(pages.findIndex((x) => x.pageId === '0.page')).toBe(-1)
+
+		// there should be a new page file in pages
+		expect(pages.length).toBe(1)
+		const newPageId = pages[0].pageId
+
+		// the map should be updated with the new pageId
+		for (const [_, entry] of map.entries()) {
+			expect(entry.pageId).toBe(newPageId)
+		}
+
+		// the new page file should have the data
+		const newPageData = vol.readFileSync(`./${newPageId}`)
+		expect(newPageData.toString()).toBe(
+			'{"id":"1","_seq":10}\n{"id":"2","_seq":20}\n{"id":"3","_seq":30}\n',
+		)
+	})
+
+	it('should filter entries based on filterSeqNo', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		const value = Buffer.from('{"id":"1","_seq":10}\n')
+		await writeValue(page, value, 0)
+		const value2 = Buffer.from('{"id":"2","_seq":20}\n')
+		await writeValue(page, value2, 0)
+		const value3 = Buffer.from('{"id":"3","_seq":30}\n')
+		await writeValue(page, value3, 0)
+
+		// add the values to the map
+		const map = new Map<string, MapEntry>()
+		map.set('1', {
+			_seq: 10,
+			offset: 0,
+			size: value.byteLength,
+			pageId: '0.page',
+		})
+		map.set('2', {
+			_seq: 20,
+			offset: value.byteLength,
+			size: value2.byteLength,
+			pageId: '0.page',
+		})
+		map.set('3', {
+			_seq: 30,
+			offset: value.byteLength + value2.byteLength,
+			size: value3.byteLength,
+			pageId: '0.page',
+		})
+
+		const pages = [page]
+		// compact the page
+		await compactPage(map, pages, page, 20)
+
+		const newPageId = pages[0].pageId
+
+		// the map should be updated with the new pageId
+		for (const [_, entry] of map.entries()) {
+			expect(entry.pageId).toBe(newPageId)
+		}
+
+		// the new page file should have the data
+		const newPageData = vol.readFileSync(`./${newPageId}`)
+		expect(newPageData.toString()).toBe(
+			'{"id":"2","_seq":20}\n{"id":"3","_seq":30}\n',
+		)
+	})
+
+	it('should not compact if the page is locked', async () => {
+		const page = await openOrCreatePageFile('./0.page')
+		page.locked = true
+		const map = new Map<string, MapEntry>()
+		const pages = [page]
+		expect(compactPage(map, pages, page)).rejects.toThrow(
+			'Page is already locked',
+		)
 	})
 })

@@ -62,7 +62,7 @@ export type JsDbOptions = {
 	 * The delay in milliseconds before the data is synced to disk. The default is
 	 * 1000 ms. This is useful for reducing the number of disk writes. The data is
 	 * still written to the file handle but the file handle is not flushed to disk.
-	 * Set it to -1 to sync after every write. A setting of -1 will reduce the
+	 * Set it to -1 to sync after every write. A setting of 0 will reduce the
 	 * performance of the database but will provide maximum relaibility. In case
 	 * of a crash, the data will be lost if the data is not synced to disk.
 	 *

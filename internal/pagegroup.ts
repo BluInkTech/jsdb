@@ -197,7 +197,7 @@ export function mergePageMaps(
 			const existing = target.get(key)
 			// use greater than equal to as compaction might result in same sequence number
 			// but offset might be different.
-			if (existing && existing._seq >= value._seq) {
+			if (existing && existing._seq > value._seq) {
 				continue
 			}
 			target.set(key, value)

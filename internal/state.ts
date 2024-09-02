@@ -42,7 +42,10 @@ export function createOptions(options: Partial<JsDbOptions>): JsDbOptions {
 		opts.maxPageSize = options.maxPageSize
 	}
 
-	if (options.dataSyncDelay) {
+	if (
+		options.dataSyncDelay !== undefined &&
+		Number.isInteger(options.dataSyncDelay)
+	) {
 		opts.dataSyncDelay = options.dataSyncDelay
 	}
 

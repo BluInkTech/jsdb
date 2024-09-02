@@ -19,8 +19,13 @@ describe('create option tests', () => {
 	})
 
 	it('data sync delay is set', () => {
-		const opts = createOptions({ dirPath: 'test', dataSyncDelay: 100 })
-		expect(opts.dataSyncDelay).toBe(100)
+		const opts = createOptions({ dirPath: 'test', dataSyncDelay: 10 })
+		expect(opts.dataSyncDelay).toBe(10)
+	})
+
+	it('data sync delay of 0 works', () => {
+		const opts = createOptions({ dirPath: 'test', dataSyncDelay: 0 })
+		expect(opts.dataSyncDelay).toBe(0)
 	})
 
 	it('stale data threshold must be between 0 and 1', () => {

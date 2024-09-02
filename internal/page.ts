@@ -222,7 +222,7 @@ export async function writeValue(
 	buffer: Buffer,
 	sync: number,
 ): Promise<number> {
-	const written = await page.handle.write(buffer, 0, buffer.length, -1)
+	const written = await page.handle.write(buffer, 0, buffer.length)
 
 	// Debounce the datasync operation to avoid frequent disk writes
 	if (sync === 0) {
@@ -253,11 +253,13 @@ export async function writeValue(
  * @param map The map of entries in the database
  * @param pages The list of pages in the database
  * @param page The page to compact
+ * @param filterSeqNo The sequence number below which entries are filtered out
  */
 export async function compactPage(
 	map: Map<string, MapEntry>,
 	pages: Page[],
 	page: Page,
+	filterSeqNo = 0,
 ): Promise<void> {
 	if (page.locked) {
 		throw new Error('Page is already locked')
@@ -272,7 +274,11 @@ export async function compactPage(
 	const newMap = new Map<string, MapEntry>()
 	let size = 0
 	try {
+		const newPageName = `${newPageId}.page`
 		for (const [id, entry] of map.entries()) {
+			if (entry._seq < filterSeqNo) {
+				continue
+			}
 			if (entry.pageId === page.pageId) {
 				const oldValue = await page.handle.read(
 					Buffer.alloc(entry.size),
@@ -284,7 +290,6 @@ export async function compactPage(
 					oldValue.buffer,
 					0,
 					oldValue.buffer.length,
-					-1,
 				)
 
 				// we can increment the sequence number here but we are not doing it
@@ -295,7 +300,7 @@ export async function compactPage(
 				newMap.set(id, {
 					...entry,
 					offset: written.bytesWritten,
-					pageId: newPageId,
+					pageId: newPageName,
 				})
 				size += written.bytesWritten
 			}
@@ -307,9 +312,8 @@ export async function compactPage(
 	// rename the new page and open it again.
 	const renamedPageFile = newPagePath.replace('.tmp', '.page')
 	await rename(newPagePath, renamedPageFile)
-	const newPage = await openOrCreatePageFile(newPagePath)
+	const newPage = await openOrCreatePageFile(renamedPageFile)
 
-	// all the below operations should be sync
 	// we need to merge the new map with the main map
 	mergePageMaps(map, newMap)
 
@@ -318,10 +322,20 @@ export async function compactPage(
 	pages.splice(index, 1)
 	pages.push(newPage)
 
+	// purge any stale entries from map related to the old page
+	for (const [id, entry] of map.entries()) {
+		if (entry.pageId === page.pageId) {
+			map.delete(id)
+		}
+	}
+
 	// rename the old page file. If this fails then we will have a database which
 	// will have two entries with same sequence number. This is not a problem as
 	// the next load will pick one of the two files. The other file will have a lot
 	// of stale entries and will be cleaned up eventually.
 	await page.close()
-	await rename(page.fileName, `${page.fileName}.old`)
+	await rename(
+		path.join(rootDir, page.fileName),
+		path.join(rootDir, `${page.fileName}.old`),
+	)
 }
