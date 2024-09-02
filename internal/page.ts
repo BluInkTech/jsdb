@@ -13,10 +13,13 @@ export type Page = {
 	fileName: string
 	pageId: string
 	locked: boolean
+	closed: boolean
 	handle: FileHandle
 	size: number
 	staleBytes: number
+	hasClosed: () => boolean // added to handle stale closures
 	close: () => Promise<void>
+	flush: () => Promise<void>
 }
 
 /**
@@ -39,17 +42,39 @@ export type MapEntry = {
 export async function openOrCreatePageFile(pagePath: string): Promise<Page> {
 	const handle = await open(pagePath, 'a+')
 	const stats = await handle.stat()
-	return {
+	const page = {
 		fileName: pagePath,
 		pageId: path.basename(pagePath),
 		locked: false,
+		closed: false,
 		handle,
 		size: stats.size,
 		staleBytes: 0,
+		hasClosed: () => page.closed,
 		close: async () => {
-			await handle.close()
+			if (!page.hasClosed()) {
+				try {
+					// there is not much that can be done here
+					await handle.close()
+				} finally {
+					page.closed = true
+				}
+			}
+		},
+		flush: async () => {
+			if (!page.hasClosed()) {
+				try {
+					await handle.datasync()
+				} catch (error) {
+					// ignore the error if the file is already closed
+					if ((error as NodeJS.ErrnoException).code !== 'EBADF') {
+						throw error
+					}
+				}
+			}
 		},
 	}
+	return page
 }
 
 /**
@@ -204,9 +229,7 @@ export async function writeValue(
 		await page.handle.datasync()
 	} else {
 		debounce(async () => {
-			if (page.handle && !page.locked) {
-				await page.handle.datasync()
-			}
+			await page.flush()
 		}, sync)()
 	}
 
@@ -245,7 +268,7 @@ export async function compactPage(
 	const newPageId = generateId()
 
 	const newPagePath = path.join(rootDir, `${newPageId}.tmp`)
-	let newPageHandle = await open(newPagePath, 'a+')
+	const newPageHandle = await open(newPagePath, 'a+')
 	const newMap = new Map<string, MapEntry>()
 	let size = 0
 	try {
@@ -284,7 +307,7 @@ export async function compactPage(
 	// rename the new page and open it again.
 	const renamedPageFile = newPagePath.replace('.tmp', '.page')
 	await rename(newPagePath, renamedPageFile)
-	newPageHandle = await open(newPagePath, 'a+')
+	const newPage = await openOrCreatePageFile(newPagePath)
 
 	// all the below operations should be sync
 	// we need to merge the new map with the main map
@@ -293,22 +316,12 @@ export async function compactPage(
 	// remove the old page entry from the pages list and add a new page entry
 	const index = pages.findIndex((p) => p.pageId === page.pageId)
 	pages.splice(index, 1)
-	pages.push({
-		fileName: renamedPageFile,
-		pageId: newPageId,
-		locked: false,
-		handle: newPageHandle,
-		size: size,
-		staleBytes: 0, // will be recalculated by the timer
-		close: async () => {
-			await newPageHandle.close()
-		},
-	})
+	pages.push(newPage)
 
 	// rename the old page file. If this fails then we will have a database which
 	// will have two entries with same sequence number. This is not a problem as
 	// the next load will pick one of the two files. The other file will have a lot
 	// of stale entries and will be cleaned up eventually.
-	await page.handle.close()
+	await page.close()
 	await rename(page.fileName, `${page.fileName}.old`)
 }

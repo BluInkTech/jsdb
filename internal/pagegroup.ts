@@ -21,6 +21,7 @@ export type PageGroup = {
 	dataSyncDelay: number
 	maxPageSize: number
 	maxStaleBytes: number
+	close: () => Promise<void>
 }
 
 /**
@@ -47,7 +48,7 @@ export async function createPageGroup(
 		files.map((file) => openOrCreatePageFile(file)),
 	)
 
-	return {
+	const group = {
 		map,
 		extension,
 		pages,
@@ -56,7 +57,13 @@ export async function createPageGroup(
 		maxPageSize: opts.maxPageSize,
 		maxStaleBytes: opts.maxPageSize * opts.staleDataThreshold,
 		dataSyncDelay: opts.dataSyncDelay,
+		close: async () => {
+			await Promise.all(pages.map((p) => p.close()))
+			group.map.clear()
+			group.pages = []
+		},
 	}
+	return group
 }
 
 /**
