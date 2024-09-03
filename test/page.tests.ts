@@ -9,7 +9,7 @@ import {
 	readValue,
 	writeValue,
 } from '../internal/page.js'
-import { printDirStats, words } from './helpers.js'
+import { words } from './helpers.js'
 
 vi.mock('node:fs')
 vi.mock('node:fs/promises')

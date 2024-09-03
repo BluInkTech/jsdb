@@ -129,6 +129,7 @@ export async function getfreePage(
 		pg.pages[startIdx].size < pg.maxPageSize
 	) {
 		page = pg.pages[startIdx]
+		pg.lastIdx = startIdx
 	} else {
 		// If the current page is not available, find the next available page
 		for (let i = startIdx + 1; i < length; i++) {
@@ -147,6 +148,7 @@ export async function getfreePage(
 			path.join(pg.dirPath, `${generateId()}${pg.extension}`),
 		)
 		pg.pages.push(page)
+		pg.lastIdx = pg.pages.length - 1
 	}
 	return page
 }
@@ -195,7 +197,7 @@ export function mergePageMaps(
 	for (const map of maps) {
 		for (const [key, value] of map) {
 			const existing = target.get(key)
-			// use greater than equal to as compaction might result in same sequence number
+			// use greater than as compaction might result in same sequence number
 			// but offset might be different.
 			if (existing && existing._seq > value._seq) {
 				continue
