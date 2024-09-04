@@ -1,4 +1,3 @@
-import { vol } from 'memfs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MapEntry, Page } from '../internal/page.js'
 import {
@@ -10,30 +9,29 @@ import {
 	minSequenceNo,
 } from '../internal/pagegroup.js'
 import { createOptions } from '../internal/state.js'
-vi.mock('node:fs')
-vi.mock('node:fs/promises')
+import { Vol } from './helpers.js'
 
 describe('createPageGroup', () => {
 	beforeEach(() => {
-		vol.reset()
+		Vol.reset()
 	})
 
 	it('should create a new page group', async () => {
-		vol.fromJSON({
-			'./file1.json': Buffer.from(''),
-			'./file2.json': Buffer.from(''),
+		Vol.from({
+			'./file1.json': '',
+			'./file2.json': '',
 		})
 
 		const options = createOptions({
-			dirPath: '/path/to/dir',
+			dirPath: Vol.path('./'),
 		})
-		const group = await createPageGroup('./', '.json', options)
+		const group = await createPageGroup(Vol.path('./'), '.json', options)
 
 		expect(group).toMatchObject({
 			map: new Map(),
 			extension: '.json',
 			lastIdx: 0,
-			dirPath: '/path/to/dir',
+			dirPath: Vol.path('./'),
 			maxPageSize: options.maxPageSize,
 			maxStaleBytes: options.maxPageSize * options.staleDataThreshold,
 			dataSyncDelay: options.dataSyncDelay,

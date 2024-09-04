@@ -1,4 +1,10 @@
-import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+	mkdirSync,
+	readdirSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -185,4 +191,56 @@ export const printDirStats = (dir) => {
 			`${file.padEnd(30, '.')} ${(stats.size / 1024).toLocaleString()} Kb`,
 		)
 	}
+}
+
+export const sleep = (ms: number) =>
+	new Promise((resolve) => setTimeout(resolve, ms))
+
+const sut = {
+	folder1: {
+		'file1.txt': 'file1 content',
+		folder2: {
+			'file2.txt': 'file2 content',
+		},
+	},
+}
+
+export const Vol = {
+	rootDir: '',
+	// Create files and folders in the temp directory based on the data
+	from(data: Record<string, string | Record<string, string>>, dir?: string) {
+		if (!dir) {
+			Vol.rootDir = getTempDir()
+		}
+		for (const [key, value] of Object.entries(data)) {
+			// check if value is a string
+			if (value !== undefined && typeof value === 'string') {
+				// create the file with the content
+				const filePath = path.join(Vol.rootDir, key)
+				mkdirSync(path.dirname(filePath), { recursive: true })
+				writeFileSync(filePath, value)
+				continue
+			}
+			const filePath = path.join(Vol.rootDir, key)
+			if (typeof value === 'object') {
+				mkdirSync(filePath, { recursive: true })
+				Vol.from(value, Vol.rootDir)
+			} else {
+				mkdirSync(path.dirname(filePath), { recursive: true })
+				mkdirSync(filePath, { recursive: true })
+			}
+		}
+	},
+	reset() {
+		if (Vol.rootDir) {
+			rmSync(Vol.rootDir, { recursive: true, force: true })
+			Vol.rootDir = ''
+		}
+	},
+	path(...paths: string[]) {
+		if (!Vol.rootDir) {
+			Vol.rootDir = getTempDir()
+		}
+		return path.join(Vol.rootDir, ...paths)
+	},
 }

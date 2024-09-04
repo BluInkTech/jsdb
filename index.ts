@@ -244,7 +244,10 @@ async function close(state: DbState): Promise<void> {
 		clearInterval(timer)
 	}
 
-	await Promise.all([state.data.close(), state.logs.close()])
+	try {
+		await Promise.all([state.data.close(), state.logs.close()])
+	} finally {
+	}
 	// reset the state
 	state.opened = false
 }

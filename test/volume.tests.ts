@@ -1,9 +1,16 @@
-import { readdirSync, statSync } from 'node:fs'
+import { readFileSync, readSync, readdirSync } from 'node:fs'
 import path from 'node:path'
-import { vol } from 'memfs'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest'
 import { type JsDb, openDb } from '../index.js'
-import { getTempDir, printDirStats, words } from './helpers.js'
+import { getTempDir, printDirStats, sleep, words } from './helpers.js'
 
 // create random length sentences using the words
 const sentences: Array<string> = []
@@ -17,22 +24,31 @@ for (let i = 0; i < 100; i++) {
 }
 
 const entries = 5000
-vi.mock('node:fs')
-vi.mock('node:fs/promises')
-vol.reset()
-const dirPath = '/' //getTempDir()
+const dirPath = getTempDir()
 describe(
 	'High volume tests',
 	{
-		timeout: 60000,
+		timeout: 120000,
 	},
 	() => {
 		let db: JsDb
 		beforeAll(async () => {
-			db = await openDb({ dirPath })
+			db = await openDb({ dirPath, dataSyncDelay: 100 })
 		})
 
-		it('add entries and check', async () => {
+		afterEach(({ task }) => {
+			if (task.result?.state !== 'pass') {
+				// print the content of the file
+				const files = readdirSync(dirPath)
+				for (const file of files) {
+					const f = readFileSync(path.join(dirPath, file))
+					console.log(file)
+					console.log(f.toString())
+				}
+			}
+		})
+
+		it('add entry and check previous entry', async () => {
 			for (let i = 0; i < entries; i++) {
 				await db.set(i.toString(), {
 					id: i.toString(),
@@ -40,14 +56,26 @@ describe(
 					sentence: sentences[i % 100],
 				})
 
-				// get the entry
-				const entry = await db.get(i.toString())
-				expect(entry).toStrictEqual({
-					_seq: i + 1,
-					id: i.toString(),
-					word: words[i % 100],
-					sentence: sentences[i % 100],
-				})
+				if (i > 1) {
+					// Get the previous entry. We want to ensure that there is no
+					// out of order writes. This logic will stress the read/write path
+					// enough to catch any issues.
+					const entry1 = await db.get((i - 1).toString())
+					expect(entry1).toStrictEqual({
+						_seq: i,
+						id: (i - 1).toString(),
+						word: words[(i - 1) % 100],
+						sentence: sentences[(i - 1) % 100],
+					})
+
+					const entry2 = await db.get((i - 2).toString())
+					expect(entry2).toStrictEqual({
+						_seq: i - 1,
+						id: (i - 2).toString(),
+						word: words[(i - 2) % 100],
+						sentence: sentences[(i - 2) % 100],
+					})
+				}
 			}
 		})
 

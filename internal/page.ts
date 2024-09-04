@@ -1,8 +1,9 @@
-import { type FileHandle, open, rename } from 'node:fs/promises'
+import fs from 'node:fs'
+import fsp, { type FileHandle } from 'node:fs/promises'
 import path from 'node:path'
 import type { Idable } from '../index.js'
 import { mergePageMaps } from './pagegroup.js'
-import { debounce, generateId } from './utils.js'
+import { debounce, generateId, throttle } from './utils.js'
 
 /**
  * A page represents a file in the database. Each page is
@@ -14,10 +15,11 @@ export type Page = {
 	pageId: string
 	locked: boolean
 	closed: boolean
-	handle: FileHandle
+	// fd: number
+	rs: FileHandle
+	ws: NodeJS.WritableStream
 	size: number
 	staleBytes: number
-	hasClosed: () => boolean // added to handle stale closures
 	close: () => Promise<void>
 	flush: () => Promise<void>
 }
@@ -40,36 +42,47 @@ export type MapEntry = {
  * @returns a page object
  */
 export async function openOrCreatePageFile(pagePath: string): Promise<Page> {
-	const handle = await open(pagePath, 'a+')
-	const stats = await handle.stat()
-	const page = {
+	const handle = await fsp.open(pagePath, 'a+')
+	const stats = fs.statSync(pagePath)
+
+	const ws = handle.createWriteStream({
+		highWaterMark: 1024 * 4,
+		encoding: 'utf8',
+		autoClose: false,
+	})
+
+	const page: Page = {
 		fileName: pagePath,
 		pageId: path.basename(pagePath),
 		locked: false,
 		closed: false,
-		handle,
+		// fd,
 		size: stats.size,
 		staleBytes: 0,
-		hasClosed: () => page.closed,
+		rs: handle,
+		ws,
 		close: async () => {
-			if (!page.hasClosed()) {
-				try {
-					// there is not much that can be done here
-					await handle.close()
-				} finally {
-					page.closed = true
+			try {
+				// there is not much that can be done here
+				await page.rs.close()
+				page.ws.end()
+			} catch (error) {
+				// ignore the error if the file is already closed
+				if ((error as NodeJS.ErrnoException).code !== 'EBADF') {
+					throw error
 				}
+			} finally {
+				page.closed = true
 			}
 		},
 		flush: async () => {
-			if (!page.hasClosed()) {
-				try {
-					await handle.datasync()
-				} catch (error) {
-					// ignore the error if the file is already closed
-					if ((error as NodeJS.ErrnoException).code !== 'EBADF') {
-						throw error
-					}
+			try {
+				await page.rs.sync()
+				// fs.fsyncSync(page.fd)
+			} catch (error) {
+				// ignore the error if the file is already closed
+				if ((error as NodeJS.ErrnoException).code !== 'EBADF') {
+					throw error
 				}
 			}
 		},
@@ -154,7 +167,7 @@ export async function readLines(
 	bufferSize = 1024,
 	breakChar = '\n',
 ): Promise<void> {
-	const stream = await open(filePath, 'r')
+	const stream = await fsp.open(filePath, 'r')
 	const buffer = Buffer.alloc(bufferSize)
 
 	const breakCharCode = breakChar.charCodeAt(0)
@@ -212,8 +225,17 @@ export async function readValue(
 	offset: number,
 	length: number,
 ): Promise<unknown> {
-	const value = await page.handle.read(Buffer.alloc(length), 0, length, offset)
-	return JSON.parse(value.buffer.toString())
+	const value = await page.rs.read(Buffer.alloc(length), 0, length, offset)
+	try {
+		return JSON.parse(value.buffer.toString())
+	} catch (err) {
+		throw new Error(
+			`Failed to parse JSON value from page:${page.fileName}:${offset}\n${value.buffer}`,
+			{
+				cause: err,
+			},
+		)
+	}
 }
 
 // write a value to the end of the page
@@ -222,20 +244,36 @@ export async function writeValue(
 	buffer: Buffer,
 	sync: number,
 ): Promise<number> {
-	const written = await page.handle.write(buffer, 0, buffer.length)
-
-	// Debounce the datasync operation to avoid frequent disk writes
 	if (sync === 0) {
-		await page.handle.datasync()
-	} else {
-		debounce(async () => {
-			await page.flush()
-		}, sync)()
+		fs.writeSync(page.rs.fd, buffer, 0, buffer.byteLength)
+		page.size += buffer.byteLength
+		return buffer.byteLength
 	}
 
+	await page.rs.write(buffer, 0, buffer.byteLength)
+
+	// const written = page.ws.write(buffer, (err) => {
+	// 	if (err) {
+	// 		throw err
+	// 	}
+	// })
+
+	// if (!written) {
+	// 	await new Promise<void>((resolve) => {
+	// 		page.ws.once('drain', () => {
+	// 			resolve()
+	// 		})
+	// 	})
+	// }
+
+	// Throttle the datasync operation to avoid frequent disk writes
+	throttle(() => {
+		page.flush()
+	}, sync)()
+
 	// update the size of the page
-	page.size += written.bytesWritten
-	return written.bytesWritten
+	page.size += buffer.byteLength
+	return buffer.byteLength
 }
 
 /**
@@ -270,7 +308,7 @@ export async function compactPage(
 	const newPageId = generateId()
 
 	const newPagePath = path.join(rootDir, `${newPageId}.tmp`)
-	const newPageHandle = await open(newPagePath, 'a+')
+	const newPageHandle = await fsp.open(newPagePath, 'a+')
 	const newMap = new Map<string, MapEntry>()
 	let size = 0
 	try {
@@ -280,7 +318,7 @@ export async function compactPage(
 				continue
 			}
 			if (entry.pageId === page.pageId) {
-				const oldValue = await page.handle.read(
+				const oldValue = await page.rs.read(
 					Buffer.alloc(entry.size),
 					0,
 					entry.size,
@@ -311,7 +349,7 @@ export async function compactPage(
 
 	// rename the new page and open it again.
 	const renamedPageFile = newPagePath.replace('.tmp', '.page')
-	await rename(newPagePath, renamedPageFile)
+	await fsp.rename(newPagePath, renamedPageFile)
 	const newPage = await openOrCreatePageFile(renamedPageFile)
 
 	// we need to merge the new map with the main map
@@ -334,8 +372,5 @@ export async function compactPage(
 	// the next load will pick one of the two files. The other file will have a lot
 	// of stale entries and will be cleaned up eventually.
 	await page.close()
-	await rename(
-		path.join(rootDir, page.fileName),
-		path.join(rootDir, `${page.fileName}.old`),
-	)
+	await fsp.rename(page.fileName, `${page.fileName}.old`)
 }

@@ -1,14 +1,10 @@
 import { rmSync } from 'node:fs'
-// import { fs, vol } from 'memfs'
 // import { bench, vi } from 'vitest'
 import { openDb } from '../index.js'
 import { getTempDir, printDirStats } from './helpers.js'
 
-// vi.mock('node:fs')
-// vi.mock('node:fs/promises')
-// vol.reset()
 const dir = getTempDir()
-let db = await openDb({ dirPath: dir })
+let db = await openDb({ dirPath: dir, dataSyncDelay: 0 })
 
 // create test records
 const records = [
@@ -37,7 +33,7 @@ function printPerf(perfName, count) {
 	const entriesPerSecond = count / totalDurationInSeconds
 	console.log(
 		`✔  ${perfName} per second`.padEnd(40, '.'),
-		entriesPerSecond.toFixed(3),
+		entriesPerSecond.toLocaleString(),
 	)
 }
 

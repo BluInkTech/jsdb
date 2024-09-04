@@ -34,3 +34,24 @@ export function debounce(func: Function, debounceMs: number) {
 		}, debounceMs)
 	}
 }
+
+/**
+ * Throttles a function by limiting the rate at which it can be called.
+ * @param func The function to throttle
+ * @param throttleMs The number of seconds to throttle the function
+ * @returns The throttled function
+ */
+// biome-ignore lint/complexity/noBannedTypes: should work with any function
+export function throttle(func: Function, throttleMs: number) {
+	let lastCall = 0
+
+	// biome-ignore lint/suspicious/noExplicitAny: should work with any function
+	return function (...args: any[]) {
+		const now = Date.now()
+		if (now - lastCall >= throttleMs) {
+			lastCall = now
+			// @ts-ignore
+			func.apply(this, args)
+		}
+	}
+}
