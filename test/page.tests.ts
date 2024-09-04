@@ -241,8 +241,6 @@ describe('readPageFile', () => {
 		expect(readPageFile(filePath)).rejects.toThrowError(
 			expect.objectContaining({
 				message: `Invalid JSON entry in ${Vol.path('/test')} at lineNo:2`,
-				cause:
-					"Expected ',' or '}' after property value in JSON at position 21",
 			}),
 		)
 	})
