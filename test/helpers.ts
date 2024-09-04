@@ -171,6 +171,7 @@ export const testRecords = [
 export const getTempDir = () => {
 	const tempDir = path.join(
 		os.tmpdir(),
+		'jsdb-test',
 		Math.random().toString(36).substring(7),
 	)
 	mkdirSync(tempDir, { recursive: true })
@@ -207,11 +208,14 @@ const sut = {
 
 export const Vol = {
 	rootDir: '',
-	// Create files and folders in the temp directory based on the data
-	from(data: Record<string, string | Record<string, string>>, dir?: string) {
-		if (!dir) {
+	createRootDir() {
+		if (!Vol.rootDir) {
 			Vol.rootDir = getTempDir()
 		}
+	},
+	// Create files and folders in the temp directory based on the data
+	from(data: Record<string, string | Record<string, string>>, dir?: string) {
+		Vol.createRootDir()
 		for (const [key, value] of Object.entries(data)) {
 			// check if value is a string
 			if (value !== undefined && typeof value === 'string') {
@@ -238,9 +242,7 @@ export const Vol = {
 		}
 	},
 	path(...paths: string[]) {
-		if (!Vol.rootDir) {
-			Vol.rootDir = getTempDir()
-		}
+		Vol.createRootDir()
 		return path.join(Vol.rootDir, ...paths)
 	},
 }
