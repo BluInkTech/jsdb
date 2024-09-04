@@ -48,6 +48,14 @@ export async function createPageGroup(
 		files.map((file) => openOrCreatePageFile(file)),
 	)
 
+	// if there are no pages, create a new one
+	if (pages.length === 0) {
+		const page = await openOrCreatePageFile(
+			path.join(dirPath, `${generateId()}${extension}`),
+		)
+		pages.push(page)
+	}
+
 	const group = {
 		map,
 		extension,
