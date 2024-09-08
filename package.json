@@ -12,6 +12,7 @@
 		"build": "tsc",
 		"dev": "tsx index.ts",
 		"format": "biome format --write",
+		"perf": "tsx --expose-gc test/operations.perf.ts",
 		"test": "vitest run --coverage",
 		"test-watch": "vitest",
 		"type-check": "tsc --noEmit"

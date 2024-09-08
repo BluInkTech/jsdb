@@ -1,10 +1,10 @@
 import { rmSync } from 'node:fs'
 // import { bench, vi } from 'vitest'
-import { openDb } from '../index.js'
+import { type Idable, openDb } from '../index.js'
 import { getTempDir, printDirStats } from './helpers.js'
 
 const dir = getTempDir()
-let db = await openDb({ dirPath: dir, dataSyncDelay: 0 })
+let db = await openDb({ dirPath: dir, dataSyncDelay: 1000 })
 
 // create test records
 const records = [
@@ -22,7 +22,7 @@ const records = [
 	{ name: '🍞bread', color: 'brown' },
 	{ name: '🥐croissant', color: 'brown' },
 	{ name: '🥖baguette', color: 'brown' },
-]
+] as unknown as Idable[]
 function printPerf(perfName, count) {
 	const perf = performance.measure(
 		perfName,
@@ -32,13 +32,18 @@ function printPerf(perfName, count) {
 	const totalDurationInSeconds = perf.duration / 1000 // Convert milliseconds to seconds
 	const entriesPerSecond = count / totalDurationInSeconds
 	console.log(
-		`✔  ${perfName} per second`.padEnd(40, '.'),
-		entriesPerSecond.toLocaleString(),
+		`✔  ${perfName} per second`.padEnd(40, '.') +
+			Math.trunc(entriesPerSecond).toLocaleString().padStart(20, '.'),
 	)
 }
 
-const recordCount = 500
+const recordCount = 1000 // 1_000_000
 performance.mark('add-records-start')
+// await Promise.all(
+// 	Array.from({ length: recordCount }, (_, i) =>
+// 		db.set(i.toString(), records[i % records.length]),
+// 	),
+// )
 for (let i = 0; i < recordCount; i++) {
 	await db.set(i.toString(), records[i % records.length])
 }
