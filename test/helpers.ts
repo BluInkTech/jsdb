@@ -7,6 +7,8 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { type PerformanceMeasure, performance } from 'node:perf_hooks'
+import { title } from 'node:process'
 
 //  100 words with unicode characters
 export const words = [
@@ -244,5 +246,78 @@ export const Vol = {
 	path(...paths: string[]) {
 		Vol.createRootDir()
 		return path.join(Vol.rootDir, ...paths)
+	},
+}
+
+export const Benchmark = {
+	tests: [] as { name: string; fn: () => void }[],
+	results: [] as { name: string; perf: PerformanceMeasure; heap: number }[],
+
+	title(title: string) {
+		console.log()
+		console.log(title)
+		console.log('-'.repeat(title.length))
+	},
+
+	add(name: string, fn: () => void) {
+		Benchmark.tests.push({ name, fn })
+	},
+
+	run(title: string, count: number) {
+		for (const test of Benchmark.tests) {
+			global.gc?.()
+			const memStart = process.memoryUsage().heapUsed
+			performance.mark(`${test.name}-start`)
+			// capture the memory usage before running the test
+			for (let i = 0; i < count; i++) {
+				test.fn()
+			}
+			performance.mark(`${test.name}-end`)
+			const memEnd = process.memoryUsage().heapUsed
+			// console.log('Finished running test:', test.name)
+			Benchmark.results.push({
+				name: test.name,
+				perf: performance.measure(
+					test.name,
+					`${test.name}-start`,
+					`${test.name}-end`,
+				),
+				heap: memEnd - memStart,
+			})
+		}
+
+		console.log()
+		Benchmark.title(`${title} (x${count.toLocaleString()})`)
+		Benchmark.printPerf(count)
+		// clear the tests
+		Benchmark.tests = []
+		Benchmark.results = []
+	},
+
+	printPerf(count: number) {
+		Benchmark.results.sort((a, b) => a.perf.duration - b.perf.duration)
+		const bestDuration = Benchmark.results[0].perf.duration
+
+		for (const r of Benchmark.results) {
+			const perf = performance.measure(
+				r.name,
+				`${r.name}-start`,
+				`${r.name}-end`,
+			)
+			const totalDurationInSeconds = perf.duration / 1000 // Convert milliseconds to seconds
+			const entriesPerSecond = count / totalDurationInSeconds
+
+			// Calculate how many times slower the worst test is compared to this one
+			const xTimes = 100 - (bestDuration / perf.duration) * 100
+
+			console.log(
+				// biome-ignore lint/style/useTemplate: <explanation>
+				`✔  ${r.name}`.padEnd(40, '.') +
+					Math.trunc(entriesPerSecond).toLocaleString().padStart(20, '.') +
+					' ops/s' +
+					xTimes.toFixed(2).padStart(20, '.') +
+					' % slower',
+			)
+		}
 	},
 }

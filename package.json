@@ -8,7 +8,7 @@
 		"node": ">=22.0.0"
 	},
 	"scripts": {
-		"bench": "vitest bench",
+		"bench": "tsx --expose-gc",
 		"build": "tsc",
 		"dev": "tsx index.ts",
 		"format": "biome format --write",

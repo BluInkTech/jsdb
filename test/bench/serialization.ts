@@ -1,5 +1,3 @@
-/** Losts of explorartory benchmarks to determine the best approach */
-
 import v8 from 'node:v8'
 // import avro from 'avro-js'
 import { bench, describe } from 'vitest'
