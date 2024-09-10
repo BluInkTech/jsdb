@@ -113,7 +113,19 @@ export class BufferList {
 			throw new Error('Size is too small for the given stride')
 		}
 
-		this.buffer = new ArrayBuffer(parameters?.size || 4096, {
+		let initialSize = 4096
+		if (parameters?.size) {
+			initialSize = parameters.size
+		}
+
+		if (
+			parameters?.init &&
+			parameters.init.length * Int32Array.BYTES_PER_ELEMENT > initialSize
+		) {
+			initialSize = parameters.init.length * Int32Array.BYTES_PER_ELEMENT
+		}
+
+		this.buffer = new ArrayBuffer(initialSize, {
 			maxByteLength: SAFE_ARRAY_SIZE,
 		})
 

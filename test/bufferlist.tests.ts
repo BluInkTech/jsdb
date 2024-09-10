@@ -17,6 +17,16 @@ describe('BufferList tests', () => {
 		expect(list.get(2)).toBe(3)
 	})
 
+	it('should initialize with 10000 items', () => {
+		const itemsCount = 10000
+		const list = new BufferList({
+			init: Array.from({ length: itemsCount }, (_, i) => i),
+		})
+		expect(list.length).toBe(itemsCount)
+		expect(list.array.length).toBe(itemsCount)
+		expect(list.buffer.byteLength).toBe(40000)
+	})
+
 	it('should push values correctly', () => {
 		const list = new BufferList()
 		list.push(1)
