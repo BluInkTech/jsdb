@@ -93,6 +93,63 @@ export function setValue(
 		}
 	}
 }
+function equalCompoundKey(
+	array: Uint32Array,
+	index: number,
+	id: number[],
+	keyLength: number,
+): boolean {
+	for (let i = 0; i < keyLength; i++) {
+		if (array[index + i] !== id[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+function compareCompoundKey(
+	array: Uint32Array,
+	index: number,
+	id: number[],
+	keyLength: number,
+): number {
+	for (let i = 0; i < keyLength; i++) {
+		if ((array[index + i] as number) < (id[i] as number)) {
+			return -1
+		}
+		if ((array[index + i] as number) > (id[i] as number)) {
+			return 1
+		}
+	}
+	return 0
+}
+
+function bisectLeftCompound(
+	array: Uint32Array,
+	id: number[],
+	stride: number,
+	keyLength: number,
+): number {
+	let low = 0
+	let high = array.length / stride
+
+	while (low < high) {
+		const mid = (low + high) >> 1
+		const cmp = compareCompoundKey(array, mid * stride, id, keyLength)
+		if (cmp < 0) {
+			low = mid + 1
+		} else {
+			high = mid
+		}
+	}
+	return low * stride
+}
+
+function setCompoundKey(array: Uint32Array, index: number, id: number[]): void {
+	for (let i = 0; i < id.length; i++) {
+		array[index + i] = id[i] as number
+	}
+}
 
 export class BufferList {
 	public buffer: ArrayBuffer
@@ -235,6 +292,67 @@ export class BufferList {
 			this.array.copyWithin(index, index + this.stride, this.arrayLen)
 		} else {
 			// we should manually set the values to 0
+			for (let i = 0; i < this.stride; i++) {
+				this.array[index + i] = 0
+			}
+		}
+		this.arrayLen -= this.stride
+	}
+
+	setSortedCompound(id: number[], values: number[]) {
+		if (values.length + id.length !== this.stride) {
+			throw new Error('Invalid value length')
+		}
+
+		const index = bisectLeftCompound(
+			this.array.subarray(0, this.length),
+			id,
+			this.stride,
+			id.length,
+		)
+		if (equalCompoundKey(this.array, index, id, id.length)) {
+			setValue(this.array, index + id.length - 1, values)
+		} else {
+			this.expand()
+			if (this.length !== 0) {
+				this.array.copyWithin(index + this.stride, index, this.arrayLen)
+			}
+			setCompoundKey(this.array, index, id)
+			setValue(this.array, index + id.length - 1, values)
+			this.arrayLen += this.stride
+		}
+	}
+
+	getSortedCompound(id: number[]): Uint32Array | undefined {
+		if (this.length === 0) {
+			return undefined
+		}
+		const index = bisectLeftCompound(
+			this.array.subarray(0, this.length),
+			id,
+			this.stride,
+			id.length,
+		)
+		if (!equalCompoundKey(this.array, index, id, id.length)) {
+			return undefined
+		}
+		return this.array.subarray(index, index + this.stride)
+	}
+
+	removeSortedCompound(id: number[]) {
+		const index = bisectLeftCompound(
+			this.array.subarray(0, this.arrayLen),
+			id,
+			this.stride,
+			id.length,
+		)
+		if (!equalCompoundKey(this.array, index, id, id.length)) {
+			return
+		}
+
+		if (index + this.stride !== this.arrayLen) {
+			this.array.copyWithin(index, index + this.stride, this.arrayLen)
+		} else {
 			for (let i = 0; i < this.stride; i++) {
 				this.array[index + i] = 0
 			}

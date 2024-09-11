@@ -226,6 +226,111 @@ describe('BufferList tests', () => {
 			expect(value).toBeUndefined()
 		})
 	})
+
+	describe('compound keys', () => {
+		it('should throw an error if the value length is invalid', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			expect(() => bufferList.setSortedCompound([1, 2], [3])).toThrow(
+				'Invalid value length',
+			)
+		})
+
+		it('should insert a new compound key-value pair in an empty BufferList', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			bufferList.setSortedCompound([1, 2], [3, 4])
+			expect(bufferList.getSortedCompound([1, 2])).toEqual(
+				new Uint32Array([1, 2, 3, 4]),
+			)
+		})
+
+		it('should update an existing compound key-value pair', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			bufferList.setSortedCompound([1, 2], [3, 4])
+			bufferList.setSortedCompound([1, 2], [5, 6])
+			expect(bufferList.getSortedCompound([1, 2])).toEqual(
+				new Uint32Array([1, 2, 5, 6]),
+			)
+		})
+
+		it('should insert multiple compound key-value pairs in sorted order', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			bufferList.setSortedCompound([2, 3], [6, 7])
+			bufferList.setSortedCompound([1, 2], [3, 4])
+			expect(bufferList.getSortedCompound([1, 2])).toEqual(
+				new Uint32Array([1, 2, 3, 4]),
+			)
+			expect(bufferList.getSortedCompound([2, 3])).toEqual(
+				new Uint32Array([2, 3, 6, 7]),
+			)
+		})
+
+		it('should expand the buffer when necessary', () => {
+			const bufferList = new BufferList({ stride: 4, size: 32 })
+			for (let i = 0; i < 10; i++) {
+				bufferList.setSortedCompound([i, i + 1], [i + 2, i + 3])
+			}
+			expect(bufferList.length).toBe(40)
+			expect(bufferList.getSortedCompound([9, 10])).toEqual(
+				new Uint32Array([9, 10, 11, 12]),
+			)
+		})
+
+		it('should remove a compound key-value pair', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			bufferList.setSortedCompound([1, 2], [3, 4])
+			bufferList.removeSortedCompound([1, 2])
+			expect(bufferList.getSortedCompound([1, 2])).toBeUndefined()
+		})
+
+		it('should remove a compound key-value pair and shift the rest of the array', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			bufferList.setSortedCompound([1, 2], [3, 4])
+			bufferList.setSortedCompound([2, 3], [5, 6])
+			bufferList.removeSortedCompound([1, 2])
+			expect(bufferList.getSortedCompound([1, 2])).toBeUndefined()
+			expect(bufferList.getSortedCompound([2, 3])).toEqual(
+				new Uint32Array([2, 3, 5, 6]),
+			)
+		})
+
+		it('should remove a compound key-value pair and shift the rest of the array (multiple)', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			bufferList.setSortedCompound([1, 2], [3, 4])
+			bufferList.setSortedCompound([2, 3], [5, 6])
+			bufferList.setSortedCompound([3, 4], [7, 8])
+			bufferList.removeSortedCompound([2, 3])
+			expect(bufferList.getSortedCompound([2, 3])).toBeUndefined()
+			expect(bufferList.getSortedCompound([3, 4])).toEqual(
+				new Uint32Array([3, 4, 7, 8]),
+			)
+		})
+
+		it('should remove a compound key-value pair and shift the rest of the array (end)', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			bufferList.setSortedCompound([1, 2], [3, 4])
+			bufferList.setSortedCompound([2, 3], [5, 6])
+			bufferList.removeSortedCompound([2, 3])
+			expect(bufferList.getSortedCompound([2, 3])).toBeUndefined()
+		})
+
+		it('should get the compound key-value pair', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			bufferList.setSortedCompound([1, 2], [3, 4])
+			expect(bufferList.getSortedCompound([1, 2])).toEqual(
+				new Uint32Array([1, 2, 3, 4]),
+			)
+		})
+
+		it('should return undefined if the compound key-value pair does not exist', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			expect(bufferList.getSortedCompound([1, 2])).toBeUndefined()
+		})
+
+		it('should return undefined if the buffer is empty', () => {
+			const bufferList = new BufferList({ stride: 4 })
+			expect(bufferList.getSortedCompound([1, 2])).toBeUndefined()
+		})
+	})
 })
 
 describe('bisectLeft tests', () => {
