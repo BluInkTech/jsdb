@@ -74,95 +74,96 @@ export function bisectLeft<T>(
 	return start
 }
 
-export function setValue(
-	segment: Uint32Array,
-	index: number,
-	values: number[],
-) {
-	// Insert the new value at the specified index
-	// use loop unrolling for performance
-	if (values.length === 1) {
-		segment[index + 1] = values[0] as number
-	} else if (values.length === 2) {
-		segment[index + 1] = values[0] as number
-		segment[index + 2] = values[1] as number
-	} else {
-		// add the rest of the values
-		for (let i = 0; i < values.length; i++) {
-			segment[index + i + 1] = values[i] as number
-		}
-	}
-}
-function equalCompoundKey(
+/**
+ * Compares a compound key with an array of values.
+ *
+ * @param array - The array containing the compound key.
+ * @param offset - The offset in the array where the key starts.
+ * @param id - The array of values representing the key to compare.
+ * @param keyLength - The length of the key.
+ * @returns A number indicating the comparison result:
+ *          -1 if the compound key is less than the given key,
+ *           0 if they are equal,
+ *           1 if the compound key is greater than the given key.
+ * @throws Error if the length of the given key is invalid.
+ */
+export function compareCompoundKey(
 	array: Uint32Array,
-	index: number,
-	id: number[],
-	keyLength: number,
-): boolean {
-	for (let i = 0; i < keyLength; i++) {
-		if (array[index + i] !== id[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-function compareCompoundKey(
-	array: Uint32Array,
-	index: number,
+	offset: number,
 	id: number[],
 	keyLength: number,
 ): number {
+	if (id.length < keyLength) {
+		throw new Error('Invalid key length')
+	}
+
 	for (let i = 0; i < keyLength; i++) {
-		if ((array[index + i] as number) < (id[i] as number)) {
+		if ((array[offset + i] as number) < (id[i] as number)) {
 			return -1
 		}
-		if ((array[index + i] as number) > (id[i] as number)) {
+		if ((array[offset + i] as number) > (id[i] as number)) {
 			return 1
 		}
 	}
 	return 0
 }
 
+/**
+ * Performs a binary search on a sorted array of compound keys to find the
+ * leftmost occurrence of a given key.
+ *
+ * @param array - The sorted array of compound keys.
+ * @param id - The key to search for.
+ * @param stride - The stride of each compound key in the array.
+ * @param keyLength - The length of the key.
+ * @returns A tuple containing a boolean indicating if the key was found and the
+ * index of the leftmost occurrence of the key.
+ */
 function bisectLeftCompound(
 	array: Uint32Array,
 	id: number[],
 	stride: number,
 	keyLength: number,
-): number {
+): [boolean, number] {
 	let low = 0
 	let high = array.length / stride
 
 	while (low < high) {
 		const mid = (low + high) >> 1
 		const cmp = compareCompoundKey(array, mid * stride, id, keyLength)
+		if (cmp === 0) {
+			return [true, mid * stride]
+		}
 		if (cmp < 0) {
 			low = mid + 1
 		} else {
 			high = mid
 		}
 	}
-	return low * stride
+	return [false, low * stride]
 }
 
-function setCompoundKey(array: Uint32Array, index: number, id: number[]): void {
-	for (let i = 0; i < id.length; i++) {
-		array[index + i] = id[i] as number
-	}
-}
-
+/**
+ * Represents a buffer list that stores a sequence of Uint32 numbers in an
+ * underlying ArrayBuffer.
+ * The buffer list allows for efficient insertion, deletion, and retrieval of
+ * numbers.
+ */
 export class BufferList {
 	public buffer: ArrayBuffer
 	public array: Uint32Array
 	private arrayLen = 0
 	private stride: number
 
-	constructor(parameters?: {
-		stride?: number
-		init?: number[]
-		size?: number
-	}) {
-		this.stride = parameters?.stride || 1
+	constructor(
+		public keyLen: number,
+		public valueLen: number,
+		parameters?: {
+			init?: number[]
+			size?: number
+		},
+	) {
+		this.stride = keyLen + valueLen
 		if (
 			parameters?.size &&
 			parameters?.size < this.stride * Int32Array.BYTES_PER_ELEMENT
@@ -193,14 +194,30 @@ export class BufferList {
 		}
 	}
 
+	/**
+	 * Gets the length of the buffer list.
+	 *
+	 * @returns The length of the buffer list.
+	 */
 	get length() {
 		return this.arrayLen
 	}
 
+	/**
+	 * Gets the count of items in the buffer list.
+	 *
+	 * @returns The count of items.
+	 */
 	get itemsCount() {
 		return this.length / this.stride
 	}
 
+	/**
+	 * Expands the buffer.
+	 * The buffer size is doubled and resized to a multiple of 4096, ensuring it
+	 * is greater than the new length. If the resulting size exceeds the maximum
+	 * limit, an error is thrown.
+	 */
 	expand() {
 		if (this.arrayLen >= this.array.length) {
 			// find the ideal size for the buffer which should be a multiple of 4096
@@ -215,11 +232,13 @@ export class BufferList {
 		}
 	}
 
-	copyWithin(target: number, start: number) {
-		// there is no point in copying beyond the computed length
-		this.array.copyWithin(target, start, this.arrayLen)
-	}
-
+	/**
+	 * Retrieves the element at the specified index.
+	 *
+	 * @param index - The index of the element to retrieve.
+	 * @returns The element at the specified index, or undefined if the index
+	 * is out of range.
+	 */
 	get(index: number): number | undefined {
 		// We want to only allow a user to access the elements
 		// in the restricted range and not the entire underlying
@@ -230,6 +249,13 @@ export class BufferList {
 		return this.array[index]
 	}
 
+	/**
+	 * Sets the value at the specified index in the buffer list.
+	 *
+	 * @param index - The index at which to set the value.
+	 * @param value - The value to set.
+	 * @throws Error if the index is out of bounds.
+	 */
 	set(index: number, value: number) {
 		if (index < 0 || index >= this.length) {
 			throw new Error('Index out of bounds')
@@ -237,18 +263,25 @@ export class BufferList {
 		this.array[index] = value
 	}
 
-	setSorted(id: number, values: number[]) {
-		if (values.length + 1 !== this.stride) {
-			throw new Error('Invalid value length')
+	/**
+	 * Sets a sorted record in the buffer list.
+	 *
+	 * @param record - The record to be set.
+	 * @throws {Error} If the length of the record is invalid.
+	 */
+	setSorted(record: number[]) {
+		if (record.length !== this.stride) {
+			throw new Error('Invalid record length')
 		}
 
-		const index = bisectLeft(
+		const [exists, index] = bisectLeftCompound(
 			this.array.subarray(0, this.length),
-			id,
+			record,
 			this.stride,
+			this.keyLen,
 		)
-		if (this.array[index] === id) {
-			setValue(this.array, index, values)
+		if (exists) {
+			this.array.set(record, index)
 		} else {
 			this.expand()
 			if (this.length !== 0) {
@@ -256,34 +289,52 @@ export class BufferList {
 				// and adjust the length as we are adding a new value
 				this.array.copyWithin(index + this.stride, index, this.arrayLen)
 			}
-			this.array[index] = id
-			setValue(this.array, index, values)
-			this.arrayLen += this.stride
+
+			this.array.set(record, index)
+			this.arrayLen += record.length
 		}
 	}
 
-	getSorted(id: number): Uint32Array | undefined {
+	/**
+	 * Retrieves a sorted record from the buffer list.
+	 *
+	 * @param record - The record to search for.
+	 * @returns The sorted record if found, otherwise undefined.
+	 */
+	getSorted(record: number[]): Uint32Array | undefined {
 		if (this.length === 0) {
 			return undefined
 		}
-		const index = bisectLeft(
+		const [exists, index] = bisectLeftCompound(
 			this.array.subarray(0, this.length),
-			id,
+			record,
 			this.stride,
+			this.keyLen,
 		)
-		if (this.array[index] !== id) {
+
+		if (!exists) {
 			return undefined
 		}
 		return this.array.subarray(index, index + this.stride)
 	}
 
-	removeSorted(id: number) {
-		const index = bisectLeft(
-			this.array.subarray(0, this.arrayLen),
-			id,
+	/**
+	 * Removes a sorted record from the buffer list.
+	 *
+	 * @param record - The record to be removed.
+	 * @returns The removed record, or undefined if it doesn't exist.
+	 */
+	removeSorted(record: number[]) {
+		const [exists, index] = bisectLeftCompound(
+			this.array.subarray(0, this.length),
+			record,
 			this.stride,
+			this.keyLen,
 		)
-		if (this.array[index] !== id) return
+
+		if (!exists) {
+			return undefined
+		}
 
 		// removing means we need to shift the rest of the array towards the left
 		// copywithin is faster than set operation on the same array
@@ -299,72 +350,23 @@ export class BufferList {
 		this.arrayLen -= this.stride
 	}
 
-	setSortedCompound(id: number[], values: number[]) {
-		if (values.length + id.length !== this.stride) {
-			throw new Error('Invalid value length')
-		}
-
-		const index = bisectLeftCompound(
-			this.array.subarray(0, this.length),
-			id,
-			this.stride,
-			id.length,
-		)
-		if (equalCompoundKey(this.array, index, id, id.length)) {
-			setValue(this.array, index + id.length - 1, values)
-		} else {
-			this.expand()
-			if (this.length !== 0) {
-				this.array.copyWithin(index + this.stride, index, this.arrayLen)
-			}
-			setCompoundKey(this.array, index, id)
-			setValue(this.array, index + id.length - 1, values)
-			this.arrayLen += this.stride
-		}
-	}
-
-	getSortedCompound(id: number[]): Uint32Array | undefined {
-		if (this.length === 0) {
-			return undefined
-		}
-		const index = bisectLeftCompound(
-			this.array.subarray(0, this.length),
-			id,
-			this.stride,
-			id.length,
-		)
-		if (!equalCompoundKey(this.array, index, id, id.length)) {
-			return undefined
-		}
-		return this.array.subarray(index, index + this.stride)
-	}
-
-	removeSortedCompound(id: number[]) {
-		const index = bisectLeftCompound(
-			this.array.subarray(0, this.arrayLen),
-			id,
-			this.stride,
-			id.length,
-		)
-		if (!equalCompoundKey(this.array, index, id, id.length)) {
-			return
-		}
-
-		if (index + this.stride !== this.arrayLen) {
-			this.array.copyWithin(index, index + this.stride, this.arrayLen)
-		} else {
-			for (let i = 0; i < this.stride; i++) {
-				this.array[index + i] = 0
-			}
-		}
-		this.arrayLen -= this.stride
-	}
-
+	/**
+	 * Adds a value to the buffer list.
+	 *
+	 * @param value - The value to be added.
+	 */
 	push(value: number) {
 		this.expand()
 		this.array[this.arrayLen++] = value
 	}
 
+	/**
+	 * Removes and returns the last element from the buffer list.
+	 * If the buffer list is empty, returns undefined.
+	 *
+	 * @returns The last element from the buffer list, or undefined if the
+	 * buffer list is empty.
+	 */
 	pop(): number | undefined {
 		if (this.arrayLen === 0) {
 			return undefined
