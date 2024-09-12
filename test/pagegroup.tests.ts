@@ -3,10 +3,9 @@ import type { MapEntry, Page } from '../internal/page.js'
 import {
 	type PageGroup,
 	createPageGroup,
-	getfreePage,
-	maxSequenceNo,
+	getFreePage,
 	mergePageMaps,
-	minSequenceNo,
+	sequenceNo,
 } from '../internal/pagegroup.js'
 import { createOptions } from '../internal/state.js'
 import { Vol } from './helpers.js'
@@ -28,7 +27,8 @@ describe('createPageGroup', () => {
 		const group = await createPageGroup(Vol.path('./'), '.json', options)
 
 		expect(group).toMatchObject({
-			map: new Map(),
+			idMap: new Map(),
+			ridMap: new Map(),
 			extension: '.json',
 			lastIdx: 0,
 			dirPath: Vol.path('./'),
@@ -42,51 +42,52 @@ describe('createPageGroup', () => {
 	})
 })
 
-describe('maxSequenceNo', () => {
-	it('should return the max sequence number', async () => {
-		const map = new Map<string, MapEntry>()
-		map.set('1', { pageId: '1', offset: 0, size: 0, _seq: 1 })
-		map.set('2', { pageId: '2', offset: 0, size: 0, _seq: 2 })
-		map.set('3', { pageId: '3', offset: 0, size: 0, _seq: 3 })
+describe('sequenceNo', () => {
+	const ridMap = new Map<string, Partial<MapEntry>>()
+	ridMap.set('1', { _seq: 10, _rid: 1, pid: 'page1' })
+	ridMap.set('2', { _seq: 20, _rid: 2, pid: 'page2' })
+	ridMap.set('3', { _seq: 15, _rid: 3, pid: 'page1' })
 
-		const pg = { map } as PageGroup
-		const maxSeq = maxSequenceNo(pg)
-		expect(maxSeq).toBe(3)
+	const pg = { ridMap } as unknown as PageGroup
+
+	it('should return the maximum sequence number for the entire page group', () => {
+		const result = sequenceNo(pg, Math.max, '_seq')
+		expect(result).toBe(20)
 	})
 
-	it('should return the max sequence number for a specific page', async () => {
-		const map = new Map<string, MapEntry>()
-		map.set('1', { pageId: '1', offset: 0, size: 0, _seq: 1 })
-		map.set('2', { pageId: '2', offset: 0, size: 0, _seq: 2 })
-		map.set('3', { pageId: '3', offset: 0, size: 0, _seq: 3 })
-
-		const pg = { map } as PageGroup
-		const maxSeq = maxSequenceNo(pg, '2')
-		expect(maxSeq).toBe(2)
-	})
-})
-
-describe('minSequenceNo', () => {
-	it('should return the min sequence number', async () => {
-		const map = new Map<string, MapEntry>()
-		map.set('1', { pageId: '1', offset: 0, size: 0, _seq: 1 })
-		map.set('2', { pageId: '2', offset: 0, size: 0, _seq: 2 })
-		map.set('3', { pageId: '3', offset: 0, size: 0, _seq: 3 })
-
-		const pg = { map } as PageGroup
-		const minSeq = minSequenceNo(pg)
-		expect(minSeq).toBe(1)
+	it('should return the minimum sequence number for the entire page group', () => {
+		const result = sequenceNo(pg, Math.min, '_seq')
+		expect(result).toBe(10)
 	})
 
-	it('should return the min sequence number for a specific page', async () => {
-		const map = new Map<string, MapEntry>()
-		map.set('1', { pageId: '1', offset: 0, size: 0, _seq: 1 })
-		map.set('2', { pageId: '2', offset: 0, size: 0, _seq: 2 })
-		map.set('3', { pageId: '3', offset: 0, size: 0, _seq: 3 })
+	it('should return the maximum sequence number for a specific page', () => {
+		const result = sequenceNo(pg, Math.max, '_seq', 'page1')
+		expect(result).toBe(15)
+	})
 
-		const pg = { map } as PageGroup
-		const minSeq = minSequenceNo(pg, '2')
-		expect(minSeq).toBe(2)
+	it('should return the minimum sequence number for a specific page', () => {
+		const result = sequenceNo(pg, Math.min, '_seq', 'page1')
+		expect(result).toBe(10)
+	})
+
+	it('should return the maximum rid for the entire page group', () => {
+		const result = sequenceNo(pg, Math.max, '_rid')
+		expect(result).toBe(3)
+	})
+
+	it('should return the minimum rid for the entire page group', () => {
+		const result = sequenceNo(pg, Math.min, '_rid')
+		expect(result).toBe(1)
+	})
+
+	it('should return the maximum rid for a specific page', () => {
+		const result = sequenceNo(pg, Math.max, '_rid', 'page1')
+		expect(result).toBe(3)
+	})
+
+	it('should return the minimum rid for a specific page', () => {
+		const result = sequenceNo(pg, Math.min, '_rid', 'page1')
+		expect(result).toBe(1)
 	})
 })
 
@@ -98,8 +99,9 @@ describe('getFreePage', () => {
 			{ pageId: '3', locked: false, size: 50 } as Page,
 		]
 		const pg = { maxPageSize: 100, pages, lastIdx: 0 } as PageGroup
-		const page = await getfreePage(pg)
-		expect(page.pageId).toEqual('1')
+		const [pid, page] = getFreePage(pg)
+		expect(pid).toEqual('1')
+		expect(page?.pageId).toEqual('1')
 		expect(pg.lastIdx).toEqual(0)
 	})
 
@@ -110,8 +112,9 @@ describe('getFreePage', () => {
 			{ pageId: '3', locked: false, size: 50 } as Page,
 		]
 		const pg = { maxPageSize: 100, pages, lastIdx: 0 } as PageGroup
-		const page = await getfreePage(pg)
-		expect(page.pageId).toEqual('2')
+		const [pid, page] = getFreePage(pg)
+		expect(pid).toEqual('2')
+		expect(page?.pageId).toEqual('2')
 		expect(pg.lastIdx).toEqual(1)
 	})
 
@@ -122,8 +125,9 @@ describe('getFreePage', () => {
 			{ pageId: '3', locked: false, size: 50 } as Page,
 		]
 		const pg = { maxPageSize: 100, pages, lastIdx: 0 } as PageGroup
-		const page = await getfreePage(pg)
-		expect(page.pageId).toEqual('2')
+		const [pid, page] = getFreePage(pg)
+		expect(pid).toEqual('2')
+		expect(page?.pageId).toEqual('2')
 		expect(pg.lastIdx).toEqual(1)
 	})
 
@@ -134,8 +138,9 @@ describe('getFreePage', () => {
 			{ pageId: '3', locked: false, size: 50 } as Page,
 		]
 		const pg = { maxPageSize: 100, pages, lastIdx: 0 } as PageGroup
-		const page = await getfreePage(pg)
-		expect(page.pageId).toEqual('3')
+		const [pid, page] = getFreePage(pg)
+		expect(pid).toEqual('3')
+		expect(page?.pageId).toEqual('3')
 		expect(pg.lastIdx).toEqual(2)
 	})
 
@@ -146,23 +151,36 @@ describe('getFreePage', () => {
 			{ pageId: '3', locked: true, size: 50 } as Page,
 		]
 		const pg = { maxPageSize: 100, pages, lastIdx: 0, dirPath: '' } as PageGroup
-		const page = await getfreePage(pg, async (_: string) => {
-			return { pageId: '4' } as Page
-		})
-		expect(page.pageId).toEqual('4')
-		expect(pg.pages).toHaveLength(4)
-		expect(pg.lastIdx).toEqual(3)
+		const [pid, page] = getFreePage(pg)
+		expect(page).toBeUndefined()
+		expect(pid).toBeDefined()
+		// lastIdx will remain unchanged as it will be set by appendToFreePage
+		expect(pg.lastIdx).toEqual(0)
 	})
 
-	it('should reset lastIdx if it is out of bounds', async () => {
+	it('should return the first free page if lastIdx is negative', async () => {
 		const pages: Page[] = [
 			{ pageId: '1', locked: false, size: 50 } as Page,
 			{ pageId: '2', locked: false, size: 50 } as Page,
 			{ pageId: '3', locked: false, size: 50 } as Page,
 		]
-		const pg = { maxPageSize: 100, pages, lastIdx: 3 } as PageGroup
-		const page = await getfreePage(pg)
-		expect(page.pageId).toEqual('1')
+		const pg = { maxPageSize: 100, pages, lastIdx: -1 } as PageGroup
+		const [pid, page] = getFreePage(pg)
+		expect(pid).toEqual('1')
+		expect(page?.pageId).toEqual('1')
+		expect(pg.lastIdx).toEqual(0)
+	})
+
+	it('should return the first free page if lastIdx is out of bounds', async () => {
+		const pages: Page[] = [
+			{ pageId: '1', locked: false, size: 50 } as Page,
+			{ pageId: '2', locked: false, size: 50 } as Page,
+			{ pageId: '3', locked: false, size: 50 } as Page,
+		]
+		const pg = { maxPageSize: 100, pages, lastIdx: 10 } as PageGroup
+		const [pid, page] = getFreePage(pg)
+		expect(pid).toEqual('1')
+		expect(page?.pageId).toEqual('1')
 		expect(pg.lastIdx).toEqual(0)
 	})
 })

@@ -2,32 +2,51 @@ import {
 	type DbState,
 	createOptions,
 	createPageGroup,
-	readValue,
 } from './internal/index.js'
 import { ensureDir } from './internal/io.js'
 import {
+	type PageGroup,
 	appendToFreePage,
-	maxSequenceNo,
-	removeDeletedEntires,
+	getFreePage,
+	sequenceNo,
 	updateStaleBytes,
 } from './internal/pagegroup.js'
 
+export type Id = string | number
+
 /**
- * Base interface for a record in the database. Essentially, a record
- * should have a unique identifier (id) field.
+ * Base interface for a record in the database.
  */
 export interface Idable {
 	/**
 	 * The unique identifier for the record.
 	 */
-	id: string
+	id: Id
+
+	/**
+	 * Internal unique identifier for the record. This is used internally by
+	 * indexes and capturing relationships between records. Being a number,
+	 * it is memory efficient and provides faster comparison.
+	 */
+	_rid: number
+
+	/**
+	 * Represents the type of operation. This is used internally to determine
+	 * the type of operation that should be performed on the record. The value
+	 * is set by the database and should not be set by the user.
+	 * 1 - Set record
+	 * 2 - Delete record
+	 * 3 - Set relationship
+	 * 4 - Delete relationship
+	 */
+	_oid: number
 
 	/**
 	 * The sequence number for the record. This is used to determine
 	 * the order of the operations in the database. This field is auto
 	 * generated and should not be set by the user.
 	 */
-	_seq?: number
+	_seq: number
 	[index: string]: unknown
 }
 
@@ -43,7 +62,7 @@ export type JsDbOptions = {
 
 	/**
 	 * The fields that should be cached in memory for faster access. There
-	 * is a tradeoff between memory usage and speed. If the fields are not
+	 * is a trade off between memory usage and speed. If the fields are not
 	 * cached, the data will be read from the file every time it is accessed.
 	 * The cached fields are also written twice to the file, once in the index
 	 * and once in the page file.
@@ -63,7 +82,7 @@ export type JsDbOptions = {
 	 * 1000 ms. This is useful for reducing the number of disk writes. The data is
 	 * still written to the file handle but the file handle is not flushed to disk.
 	 * Set it to -1 to sync after every write. A setting of 0 will reduce the
-	 * performance of the database but will provide maximum relaibility. In case
+	 * performance of the database but will provide maximum reliability. In case
 	 * of a crash, the data will be lost if the data is not synced to disk.
 	 *
 	 * The delay value is a soft limit and it is possible for the data to be synced
@@ -85,7 +104,7 @@ export type JsDbOptions = {
 	 * should still be an impact of around 50ms when the pages are switched in
 	 * the main thread.
 	 */
-	comapctDelay: number
+	compactDelay: number
 
 	/**
 	 * The threshold in bytes for stale data in a page. When the stale data reaches
@@ -127,7 +146,7 @@ export interface JsDb {
 	 * @throws Error if the ID is missing in the record
 	 * @throws Error if the ID does not match the ID saved in the record
 	 */
-	get(id: string): Promise<Idable | undefined>
+	get(id: string): Idable | undefined
 
 	/**
 	 * Set a record in the database.
@@ -136,7 +155,7 @@ export interface JsDb {
 	 * @throws Error if the database is not open
 	 * @throws Error if a valid ID is not provided
 	 */
-	set(id: string, value: Idable): Promise<Idable>
+	set(id: string, value: Partial<Idable>): Promise<Idable>
 
 	/**
 	 * Delete a record from the database.
@@ -161,57 +180,31 @@ export async function openDb(
 	const opts = createOptions(options)
 
 	ensureDir(opts.dirPath)
-
 	const data = await createPageGroup(opts.dirPath, '.page', opts)
-	const logs = await createPageGroup(opts.dirPath, '.log', opts)
-
-	// apply the delete log
-	removeDeletedEntires(data.map, logs.map)
-
 	// calculateStaleBytes(pages, map)
 
 	// set the sequence number
-	const seqNo = Math.max(maxSequenceNo(data), maxSequenceNo(logs))
-
+	const seqNo = sequenceNo(data, Math.max, '_seq')
+	const ridNo = sequenceNo(data, Math.max, '_rid')
 	const state: DbState = {
-		opts,
 		data,
-		logs,
+		opts,
 		seqNo,
+		ridNo,
 		timers: [],
 		opened: true,
 	}
 
-	// create various timers
-	// // commit the data to disk periodically
-	// if (opts.dataSyncDelay !== -1) {
-	// 	state.timers.push(
-	// 		setInterval(async () => {
-	// 			await Promise.all(pages.map((page) => page.handle.datasync()))
-	// 			await deletePage?.handle.datasync()
-	// 		}, opts.dataSyncDelay),
-	// 	)
-	// }
-
-	// // compact the pages periodically
-	// state.timers.push(
-	// 	setInterval(() => {
-	// 		const page = pages.find(
-	// 			(page) => page.size > opts.maxPageSize * opts.staleDataThreshold,
-	// 		)
-	// 		if (page) {
-	// 			compactPage(map, pages, page)
-	// 		}
-	// 	}, opts.comapctDelay),
-	// )
-
-	return {
+	const db = {
 		close: close.bind(null, state),
 		has: hasItem.bind(null, state),
 		get: getItem.bind(null, state),
 		set: setItem.bind(null, state),
 		delete: deleteItem.bind(null, state),
 	}
+
+	Object.freeze(db)
+	return db
 }
 
 // check if a valid ID is provided
@@ -245,7 +238,7 @@ async function close(state: DbState): Promise<void> {
 	}
 
 	try {
-		await Promise.all([state.data.close(), state.logs.close()])
+		await state.data.close()
 	} finally {
 	}
 	// reset the state
@@ -264,7 +257,10 @@ function hasItem(state: DbState, id: string): boolean {
 	isValidId(id)
 	dbIsOpen(state)
 
-	return state.data.map.has(id)
+	const entry = state.data.idMap.get(id)
+	if (!entry) return false
+	if (entry._oid === 2) return false
+	return true
 }
 
 /**
@@ -276,19 +272,14 @@ function hasItem(state: DbState, id: string): boolean {
  * @throws Error if the ID is missing in the record
  * @throws Error if the ID does not match the ID saved in the record
  */
-async function getItem(
-	state: DbState,
-	id: string,
-): Promise<Idable | undefined> {
+function getItem(state: DbState, id: string): Idable | undefined {
 	isValidId(id)
 	dbIsOpen(state)
 
-	const entry = state.data.map.get(id)
+	const entry = state.data.idMap.get(id)
 	if (!entry) return undefined
-
-	const page = state.data.pages.find((page) => page.pageId === entry.pageId)
-	if (!page) return
-	const value = (await readValue(page, entry.offset, entry.size)) as Idable
+	if (entry._oid === 2) return undefined
+	const value = JSON.parse(entry.record)
 	if (!value.id) {
 		throw new Error('INTERNAL: id missing in value')
 	}
@@ -296,6 +287,36 @@ async function getItem(
 		throw new Error('INTERNAL: id mismatch')
 	}
 	return value
+}
+
+async function writeEntry(pg: PageGroup, value: Required<Idable>) {
+	const oldEntry = pg.idMap.get(value.id)
+	const json = JSON.stringify(value)
+
+	const [pageId, page] = getFreePage(pg)
+	const entry = {
+		id: value.id,
+		pid: pageId,
+		_oid: value._oid,
+		_rid: value._rid,
+		_seq: value._seq,
+		record: json,
+	}
+	pg.idMap.set(value.id, entry)
+	pg.ridMap.set(value._rid, entry)
+
+	try {
+		await appendToFreePage(pg, Buffer.from(json), page, pageId)
+		// updateStaleBytes(value.id, pg.pages, pg.idMap)
+	} catch (error) {
+		// revert the changes
+		pg.idMap.delete(value.id)
+		if (oldEntry) {
+			pg.idMap.set(value.id, oldEntry)
+			pg.ridMap.set(value._rid, oldEntry)
+		}
+		throw error
+	}
 }
 
 /**
@@ -313,14 +334,17 @@ async function setItem(
 	isValidId(id)
 	dbIsOpen(state)
 
+	// perform all the sync operations here followed by writing the data
 	value.id = id
-	const seqNo = ++state.seqNo
+	value._seq = ++state.seqNo
+	if (!value._rid) {
+		value._rid = ++state.ridNo
+	}
+	value._oid = 1
 
-	const entry = await appendToFreePage(state.data, seqNo, value)
-	updateStaleBytes(id, state.data.pages, state.data.map)
+	await writeEntry(state.data, value)
 
 	// TODO: set the cached fields on the entry
-	state.data.map.set(id, entry)
 	return value
 }
 
@@ -334,15 +358,16 @@ async function deleteItem(state: DbState, id: string): Promise<void> {
 	isValidId(id)
 	dbIsOpen(state)
 
-	const entry = state.data.map.get(id)
+	const entry = state.data.idMap.get(id)
 	if (!entry) return
 
 	const seqNo = ++state.seqNo
-	const delEntry = await appendToFreePage(state.logs, seqNo, {
+	await writeEntry(state.data, {
 		id,
+		_oid: 2,
+		_rid: entry._rid,
 		_seq: seqNo,
 	})
-	state.logs.map.set(id, delEntry)
-	updateStaleBytes(id, state.data.pages, state.data.map)
-	state.data.map.delete(id)
+
+	state.data.idMap.delete(id)
 }

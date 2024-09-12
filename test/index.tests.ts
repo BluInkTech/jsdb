@@ -21,7 +21,9 @@ describe('JsDB public interface tests', () => {
 		const entry = await db.get('1')
 		expect(entry?.id).toBe('1')
 		expect(entry?.name).toBe('Jane Doe')
+		expect(entry?._oid).toBe(1)
 		expect(entry?._seq).toBe(1)
+		expect(entry?._rid).toBe(1)
 		await db.close()
 	})
 
@@ -31,18 +33,24 @@ describe('JsDB public interface tests', () => {
 		await db.set('2', { id: '2', ...testRecords[2] })
 		expect(await db.get('1')).toStrictEqual({
 			id: '1',
+			_oid: 1,
+			_rid: 1,
 			_seq: 1,
 			...testRecords[1],
 		})
 		await db.set('3', { id: '3', ...testRecords[3] })
 		expect(await db.get('2')).toStrictEqual({
 			id: '2',
+			_oid: 1,
+			_rid: 2,
 			_seq: 2,
 			...testRecords[2],
 		})
 		expect(await db.get('3')).toStrictEqual({
 			id: '3',
+			_oid: 1,
 			_seq: 3,
+			_rid: 3,
 			...testRecords[3],
 		})
 		await db.close()

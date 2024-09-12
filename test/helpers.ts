@@ -8,8 +8,8 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { type PerformanceMeasure, performance } from 'node:perf_hooks'
-import { title } from 'node:process'
 
+/* cSpell:disable */
 //  100 words with unicode characters
 export const words = [
 	'hello🌍',
@@ -249,8 +249,9 @@ export const Vol = {
 	},
 }
 
+type BenchmarkOptions = { count?: number }
 export const Benchmark = {
-	tests: [] as { name: string; fn: () => void }[],
+	tests: [] as { name: string; fn: () => void; options?: BenchmarkOptions }[],
 	results: [] as { name: string; perf: PerformanceMeasure; heap: number }[],
 
 	title(title: string) {
@@ -259,8 +260,8 @@ export const Benchmark = {
 		console.log('-'.repeat(title.length))
 	},
 
-	add(name: string, fn: () => void) {
-		Benchmark.tests.push({ name, fn })
+	add(name: string, fn: () => void, options?: BenchmarkOptions) {
+		Benchmark.tests.push({ name, fn, options })
 	},
 
 	run(title: string, count: number) {
@@ -269,7 +270,8 @@ export const Benchmark = {
 			const memStart = process.memoryUsage().heapUsed
 			performance.mark(`${test.name}-start`)
 			// capture the memory usage before running the test
-			for (let i = 0; i < count; i++) {
+			const actualCount = test.options?.count || count
+			for (let i = 0; i < actualCount; i++) {
 				test.fn()
 			}
 			performance.mark(`${test.name}-end`)
@@ -306,6 +308,22 @@ export const Benchmark = {
 			)
 			const totalDurationInSeconds = perf.duration / 1000 // Convert milliseconds to seconds
 			const entriesPerSecond = count / totalDurationInSeconds
+			let timePerOperation = perf.duration / count // time in milliseconds
+
+			// create a user friendly unit for timePerOperation in ms, μs or ns
+			let timeUnit = 'ms'
+			if (timePerOperation < 0.001) {
+				timePerOperation = timePerOperation * 1000 * 1000
+				timeUnit = 'ns'
+			} else if (timePerOperation < 1) {
+				timePerOperation = timePerOperation * 1000
+				timeUnit = 'μs'
+			} else if (timePerOperation > 1000) {
+				timePerOperation = timePerOperation / 1000
+				timeUnit = 's'
+			} else {
+				timeUnit = 'ms'
+			}
 
 			// Calculate how many times slower the worst test is compared to this one
 			const xTimes = 100 - (bestDuration / perf.duration) * 100
@@ -315,6 +333,10 @@ export const Benchmark = {
 				`✔  ${r.name}`.padEnd(40, '.') +
 					Math.trunc(entriesPerSecond).toLocaleString().padStart(20, '.') +
 					' ops/s' +
+					timePerOperation.toFixed(2).toLocaleString().padStart(15, '.') +
+					' ' +
+					timeUnit +
+					'/op' +
 					xTimes.toFixed(2).padStart(20, '.') +
 					' % slower',
 			)

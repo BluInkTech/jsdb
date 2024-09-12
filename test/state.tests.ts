@@ -41,8 +41,8 @@ describe('create option tests', () => {
 	})
 
 	it('compact delay is set', () => {
-		const opts = createOptions({ dirPath: 'test', comapctDelay: 100 })
-		expect(opts.comapctDelay).toBe(100)
+		const opts = createOptions({ dirPath: 'test', compactDelay: 100 })
+		expect(opts.compactDelay).toBe(100)
 	})
 
 	it('cached fields are set', () => {
@@ -55,7 +55,7 @@ describe('create option tests', () => {
 		expect(opts.maxPageSize).toBe(1024 * 1024 * 8)
 		expect(opts.dataSyncDelay).toBe(1000)
 		expect(opts.staleDataThreshold).toBe(0.1)
-		expect(opts.comapctDelay).toBe(1000 * 60 * 60 * 24)
+		expect(opts.compactDelay).toBe(1000 * 60 * 60 * 24)
 		expect(opts.cachedFields).toEqual([])
 	})
 
@@ -65,13 +65,13 @@ describe('create option tests', () => {
 			maxPageSize: 1024 * 1024 * 16,
 			dataSyncDelay: 2000,
 			staleDataThreshold: 0.2,
-			comapctDelay: 1000 * 60 * 60 * 12,
+			compactDelay: 1000 * 60 * 60 * 12,
 			cachedFields: ['test'],
 		})
 		expect(opts.maxPageSize).toBe(1024 * 1024 * 16)
 		expect(opts.dataSyncDelay).toBe(2000)
 		expect(opts.staleDataThreshold).toBe(0.2)
-		expect(opts.comapctDelay).toBe(1000 * 60 * 60 * 12)
+		expect(opts.compactDelay).toBe(1000 * 60 * 60 * 12)
 		expect(opts.cachedFields).toEqual(['test'])
 	})
 })

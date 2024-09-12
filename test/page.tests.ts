@@ -3,10 +3,11 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import {
 	type MapEntry,
 	compactPage,
+	extractCacheFields,
+	missingAndTypeCheck,
 	openOrCreatePageFile,
 	readLines,
 	readPageFile,
-	readValue,
 	writeValue,
 } from '../internal/page.js'
 import { Vol, words } from './helpers.js'
@@ -177,55 +178,46 @@ describe('readPageFile', () => {
 
 	it('should read a page file', async () => {
 		Vol.from({
-			'./0.page': `{"id":"1000","_seq":1}\n{"id":"1001","_seq":2}\n{"id":"1002","_seq":3}\n{"id":"1000","_seq":4}\n`,
+			'./0.page': `{"id":"1000","_seq":1,"_rid":1,"_oid":1}
+{"id":"1001","_seq":2,"_rid":2,"_oid":1}
+{"id":"1002","_seq":3,"_rid":3,"_oid":1}
+{"id":"1000","_seq":4,"_rid":4,"_oid":1}\n`,
 		})
 
 		const result = await readPageFile(Vol.path('./0.page'))
 		expect(result).toEqual(
 			new Map([
-				['1000', { _seq: 4, offset: 69, size: 22, pageId: '0.page' }],
-				['1001', { _seq: 2, offset: 23, size: 22, pageId: '0.page' }],
-				['1002', { _seq: 3, offset: 46, size: 22, pageId: '0.page' }],
-			]),
-		)
-	})
-
-	it('should read a page file with cache fields', async () => {
-		Vol.from({
-			'./0.page': `{"id":"1000","_seq":1,"name":"John"}\n{"id":"1001","_seq":2,"name":"Doe"}\n{"id":"1002","_seq":3,"name":"Jane"}\n{"id":"1000","_seq":4,"name":"Smith"}\n`,
-		})
-
-		const result = await readPageFile(Vol.path('./0.page'), ['name'])
-		expect(result).toEqual(
-			new Map([
 				[
 					'1000',
 					{
+						id: '1000',
+						_oid: 1,
 						_seq: 4,
-						offset: 110,
-						size: 37,
-						pageId: '0.page',
-						cache: { name: 'Smith' },
+						_rid: 4,
+						pid: '0.page',
+						record: '{"id":"1000","_seq":4,"_rid":4,"_oid":1}',
 					},
 				],
 				[
 					'1001',
 					{
+						id: '1001',
+						_oid: 1,
 						_seq: 2,
-						offset: 37,
-						size: 35,
-						pageId: '0.page',
-						cache: { name: 'Doe' },
+						_rid: 2,
+						pid: '0.page',
+						record: '{"id":"1001","_seq":2,"_rid":2,"_oid":1}',
 					},
 				],
 				[
 					'1002',
 					{
+						id: '1002',
+						_oid: 1,
 						_seq: 3,
-						offset: 73,
-						size: 36,
-						pageId: '0.page',
-						cache: { name: 'Jane' },
+						_rid: 3,
+						pid: '0.page',
+						record: '{"id":"1002","_seq":3,"_rid":3,"_oid":1}',
 					},
 				],
 			]),
@@ -234,66 +226,12 @@ describe('readPageFile', () => {
 
 	it('should throw error for invalid JSON entries', async () => {
 		Vol.from({
-			'./test': `{"id":"1000","_seq":1}\n{"id":"1001","_seq":2\n`,
+			'./test': `{"id":"1000","_seq":1,"_rid":1,"_oid":1}\n{"id":"1001","_seq":2\n`,
 		})
 
 		const filePath = Vol.path('./test')
 		expect(readPageFile(filePath)).rejects.toThrowError(
-			expect.objectContaining({
-				message: `Invalid JSON entry in ${Vol.path('/test')} at lineNo:2`,
-			}),
-		)
-	})
-
-	it('should throw error for invalid id field', async () => {
-		Vol.from({
-			'./test': `{"id":1000,"_seq":1}\n`,
-		})
-
-		expect(readPageFile(Vol.path('./test'))).rejects.toThrowError(
-			expect.objectContaining({
-				message: `Invalid JSON entry in ${Vol.path('/test')} at lineNo:1`,
-				cause: 'id must be a string',
-			}),
-		)
-	})
-
-	it('should throw error for invalid _seq field', async () => {
-		Vol.from({
-			'./test': `{"id":"1000","_seq":"1"}\n`,
-		})
-
-		expect(readPageFile(Vol.path('./test'))).rejects.toThrowError(
-			expect.objectContaining({
-				message: `Invalid JSON entry in ${Vol.path('/test')} at lineNo:1`,
-				cause: '_seq must be a number',
-			}),
-		)
-	})
-
-	it('should throw error for missing id field', async () => {
-		Vol.from({
-			'./test': `{"_seq":1}\n`,
-		})
-
-		expect(readPageFile(Vol.path('./test'))).rejects.toThrowError(
-			expect.objectContaining({
-				message: `Invalid JSON entry in ${Vol.path('/test')} at lineNo:1`,
-				cause: 'id and _seq are required fields',
-			}),
-		)
-	})
-
-	it('should throw error for missing _seq field', async () => {
-		Vol.from({
-			'./test': `{"id":"1000"}\n`,
-		})
-
-		expect(readPageFile(Vol.path('./test'))).rejects.toThrowError(
-			expect.objectContaining({
-				message: `Invalid JSON entry in ${Vol.path('/test')} at lineNo:1`,
-				cause: 'id and _seq are required fields',
-			}),
+			`Invalid JSON entry in ${Vol.path('/test')} at lineNo:2`,
 		)
 	})
 
@@ -302,45 +240,100 @@ describe('readPageFile', () => {
 			`ENOENT: no such file or directory, open '${Vol.path('./test.page')}'`,
 		)
 	})
+})
 
-	it('round trip test', async () => {
-		const fileContent = words
-			.map((word, i) =>
-				JSON.stringify({ id: i.toString(), name: word, _seq: i }),
-			)
-			.join('\n')
-			.concat('\n')
+describe('missingAndTypeCheck', () => {
+	it('should throw an error if the field is missing', () => {
+		const json = { name: 'test' }
+		expect(() => missingAndTypeCheck(json, 'age', 'number')).toThrow(
+			'age is missing',
+		)
+	})
 
-		Vol.from({
-			'./0.page': fileContent,
+	it('should throw an error if the field is not of the correct type', () => {
+		const json = { age: 'twenty' }
+		expect(() => missingAndTypeCheck(json, 'age', 'number')).toThrow(
+			'age must be a number',
+		)
+	})
+
+	it('should not throw an error if the field is present and of the correct type', () => {
+		const json = { age: 20 }
+		expect(() => missingAndTypeCheck(json, 'age', 'number')).not.toThrow()
+	})
+
+	it('should throw an error if the field is present but of the wrong type (string expected)', () => {
+		const json = { name: 123 }
+		expect(() => missingAndTypeCheck(json, 'name', 'string')).toThrow(
+			'name must be a string',
+		)
+	})
+
+	it('should throw an error if the field is present but of the wrong type (boolean expected)', () => {
+		const json = { isActive: 'true' }
+		expect(() => missingAndTypeCheck(json, 'isActive', 'boolean')).toThrow(
+			'isActive must be a boolean',
+		)
+	})
+
+	it('should not throw an error if the field is present and of the correct type (boolean)', () => {
+		const json = { isActive: true }
+		expect(() => missingAndTypeCheck(json, 'isActive', 'boolean')).not.toThrow()
+	})
+})
+
+describe('extractCacheFields', () => {
+	it('should extract specified fields from the JSON object', () => {
+		const json = {
+			field1: 'value1',
+			field2: 'value2',
+			field3: 'value3',
+		}
+		const cacheFields = ['field1', 'field3']
+		const result = extractCacheFields(json, cacheFields)
+		expect(result).toEqual({
+			field1: 'value1',
+			field3: 'value3',
 		})
+	})
 
-		const result = await readPageFile(Vol.path('./0.page'))
-		expect(result.size).toBe(words.length)
-
-		const contentBuffer = Buffer.from(fileContent)
-		// check that the reported offsets and sizes are correct
-		for (const [id, entry] of result) {
-			const line = contentBuffer
-				.subarray(entry.offset, entry.offset + entry.size)
-				.toString()
-			expect(line).toContain(
-				JSON.stringify({ id: id, name: words[entry._seq], _seq: entry._seq }),
-			)
+	it('should return an empty object if no fields match', () => {
+		const json = {
+			field1: 'value1',
+			field2: 'value2',
 		}
+		const cacheFields = ['field3', 'field4']
+		const result = extractCacheFields(json, cacheFields)
+		expect(result).toEqual({})
+	})
 
-		const page = await openOrCreatePageFile(Vol.path('./0.page'))
-		// should be able to read the data from the file based on the generated offset and size
-		let i = 0
-		for (const [id, entry] of result) {
-			const value = await readValue(page, entry.offset, entry.size)
-			expect(value).toEqual({
-				id: id,
-				name: words[i],
-				_seq: i,
-			})
-			i++
+	it('should ignore fields that are not present in the JSON object', () => {
+		const json = {
+			field1: 'value1',
+			field2: 'value2',
 		}
+		const cacheFields = ['field1', 'field3']
+		const result = extractCacheFields(json, cacheFields)
+		expect(result).toEqual({
+			field1: 'value1',
+		})
+	})
+
+	it('should handle an empty JSON object', () => {
+		const json = {}
+		const cacheFields = ['field1', 'field2']
+		const result = extractCacheFields(json, cacheFields)
+		expect(result).toEqual({})
+	})
+
+	it('should handle an empty cacheFields array', () => {
+		const json = {
+			field1: 'value1',
+			field2: 'value2',
+		}
+		const cacheFields: string[] = []
+		const result = extractCacheFields(json, cacheFields)
+		expect(result).toEqual({})
 	})
 })
 
@@ -380,7 +373,7 @@ describe('openOrCreatePageFile', () => {
 		expect(page.closed).toBe(false)
 		// write some data to the file
 		const b = Buffer.from('1234567890\n')
-		await page.rs.write(b, 0, b.length, -1)
+		await page.handle.write(b, 0, b.length, -1)
 		await page.close()
 		expect(page.closed).toBe(true)
 
@@ -396,7 +389,7 @@ describe('openOrCreatePageFile', () => {
 
 		// write some data to the file
 		const b = Buffer.from('1234567890\n')
-		await page.rs.write(b, 0, b.length, -1)
+		await page.handle.write(b, 0, b.length, -1)
 		await page.flush()
 		expect(page.closed).toBe(false)
 
@@ -412,7 +405,7 @@ describe('openOrCreatePageFile', () => {
 
 		// write some data to the file
 		const b = Buffer.from('1234567890\n')
-		await page.rs.write(b, 0, b.length, -1)
+		await page.handle.write(b, 0, b.length, -1)
 		await page.close()
 		expect(page.closed).toBe(true)
 
@@ -431,7 +424,7 @@ describe('openOrCreatePageFile', () => {
 
 		// write some data to the file
 		const b = Buffer.from('1234567890\n')
-		await page.rs.write(b, 0, b.length, -1)
+		await page.handle.write(b, 0, b.length, -1)
 		await page.close()
 		expect(page.closed).toBe(true)
 
@@ -513,21 +506,15 @@ describe('compactPage', () => {
 		const map = new Map<string, MapEntry>()
 		map.set('1', {
 			_seq: 10,
-			offset: 0,
-			size: value.byteLength,
-			pageId: '0.page',
+			pid: '0.page',
 		})
 		map.set('2', {
 			_seq: 20,
-			offset: value.byteLength,
-			size: value2.byteLength,
-			pageId: '0.page',
+			pid: '0.page',
 		})
 		map.set('3', {
 			_seq: 30,
-			offset: value.byteLength + value2.byteLength,
-			size: value3.byteLength,
-			pageId: '0.page',
+			pid: '0.page',
 		})
 
 		const result = await readPageFile(file)
@@ -573,22 +560,28 @@ describe('compactPage', () => {
 		// add the values to the map
 		const map = new Map<string, MapEntry>()
 		map.set('1', {
+			_oid: 1,
+			_rid: 1,
 			_seq: 10,
-			offset: 0,
-			size: value.byteLength,
-			pageId: '0.page',
+			id: '1',
+			pid: '0.page',
+			record: '{"id":"1","_seq":10,"_oid":1,"_rid":1}',
 		})
 		map.set('2', {
+			_oid: 1,
+			_rid: 2,
 			_seq: 20,
-			offset: value.byteLength,
-			size: value2.byteLength,
-			pageId: '0.page',
+			id: '2',
+			pid: '0.page',
+			record: '{"id":"2","_seq":20,"_oid":1,"_rid":2}',
 		})
 		map.set('3', {
+			_oid: 1,
+			_rid: 3,
 			_seq: 30,
-			offset: value.byteLength + value2.byteLength,
-			size: value3.byteLength,
-			pageId: '0.page',
+			id: '3',
+			pid: '0.page',
+			record: '{"id":"3","_seq":30,"_oid":1,"_rid":3}',
 		})
 
 		const pages = [page]
@@ -599,13 +592,13 @@ describe('compactPage', () => {
 
 		// the map should be updated with the new pageId
 		for (const [_, entry] of map.entries()) {
-			expect(entry.pageId).toBe(newPageId)
+			expect(entry.pid).toBe(newPageId)
 		}
 
 		// the new page file should have the data
 		const newPageData = readFileSync(Vol.path(`./${newPageId}`))
 		expect(newPageData.toString()).toBe(
-			'{"id":"2","_seq":20}\n{"id":"3","_seq":30}\n',
+			`${map['1'].record}\n${map['2'].record}\n`,
 		)
 	})
 

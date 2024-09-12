@@ -47,8 +47,8 @@ describe('BufferList tests', () => {
 		list.push(2)
 		list.push(3)
 		expect(list.length).toBe(3)
-		// The length increase is in the increment of 1024
-		expect(list.array.length).toBe(1024)
+		// The length increase is in the increment of 4096
+		expect(list.array.length).toBe(4096)
 		expect(list.get(2)).toBe(3)
 	})
 

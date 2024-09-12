@@ -1,9 +1,9 @@
 import fs from 'node:fs'
-import fsp, { type FileHandle } from 'node:fs/promises'
+import fsp from 'node:fs/promises'
 import path from 'node:path'
-import type { Idable } from '../index.js'
+import type { Id, Idable } from '../index.js'
 import { mergePageMaps } from './pagegroup.js'
-import { debounce, generateId, throttle } from './utils.js'
+import { generateId, throttle } from './utils.js'
 
 /**
  * A page represents a file in the database. Each page is
@@ -15,8 +15,7 @@ export type Page = {
 	pageId: string
 	locked: boolean
 	closed: boolean
-	// fd: number
-	rs: FileHandle
+	handle: fsp.FileHandle
 	ws: NodeJS.WritableStream
 	size: number
 	staleBytes: number
@@ -29,10 +28,12 @@ export type Page = {
  * @internal
  */
 export type MapEntry = {
-	pageId: string // file identifier
-	offset: number // offset
-	size: number // size
+	_oid: number // operation identifier
+	_rid: number // record identifier
 	_seq: number // sequence number
+	id: Id // unique identifier
+	pid: string // file identifier
+	record: string // the record saved as a string
 	cache?: unknown // inline data used for fast access
 }
 
@@ -43,29 +44,27 @@ export type MapEntry = {
  */
 export async function openOrCreatePageFile(pagePath: string): Promise<Page> {
 	const handle = await fsp.open(pagePath, 'a+')
-	const stats = fs.statSync(pagePath)
-
 	const ws = handle.createWriteStream({
 		highWaterMark: 1024 * 4,
 		encoding: 'utf8',
 		autoClose: false,
 	})
+	const stats = await fsp.stat(pagePath)
 
 	const page: Page = {
 		fileName: pagePath,
 		pageId: path.basename(pagePath),
 		locked: false,
 		closed: false,
-		// fd,
 		size: stats.size,
 		staleBytes: 0,
-		rs: handle,
+		handle,
 		ws,
 		close: async () => {
 			try {
 				// there is not much that can be done here
-				await page.rs.close()
 				page.ws.end()
+				await handle.close()
 			} catch (error) {
 				// ignore the error if the file is already closed
 				if ((error as NodeJS.ErrnoException).code !== 'EBADF') {
@@ -77,8 +76,7 @@ export async function openOrCreatePageFile(pagePath: string): Promise<Page> {
 		},
 		flush: async () => {
 			try {
-				await page.rs.sync()
-				// fs.fsyncSync(page.fd)
+				await handle.datasync()
 			} catch (error) {
 				// ignore the error if the file is already closed
 				if ((error as NodeJS.ErrnoException).code !== 'EBADF') {
@@ -91,6 +89,49 @@ export async function openOrCreatePageFile(pagePath: string): Promise<Page> {
 }
 
 /**
+ * Checks if a specific field exists in a JSON object and if its type matches the
+ * specified type.
+ * @param json - The JSON object to check.
+ * @param field - The field to check in the JSON object.
+ * @param type - The expected type of the field. Can be 'string', 'number', or 'boolean'.
+ * @throws {Error} If the field is missing or if its type does not match the specified type.
+ */
+export function missingAndTypeCheck(
+	// biome-ignore lint/suspicious/noExplicitAny: should work with any type
+	json: any,
+	field: string,
+	type: 'string' | 'number' | 'boolean',
+) {
+	if (json[field] === undefined) {
+		throw new Error(`${field} is missing`)
+	}
+
+	// biome-ignore lint/suspicious/useValidTypeof: We want to check it dynamically
+	if (typeof json[field] !== type) {
+		throw new Error(`${field} must be a ${type}`)
+	}
+}
+
+/**
+ * Extracts specified cache fields from a JSON object and returns them as a
+ * separate cache object.
+ * @param json - The JSON object from which to extract cache fields.
+ * @param cacheFields - An array of strings representing the cache fields to extract.
+ * @returns A cache object containing the extracted cache fields.
+ */
+export function extractCacheFields(
+	json: Record<string, unknown>,
+	cacheFields: string[],
+) {
+	const cache: Record<string, unknown> = {}
+	for (const field of cacheFields) {
+		if (json[field] !== undefined) {
+			cache[field] = json[field]
+		}
+	}
+	return cache
+}
+/**
  * Read a JSON new line file and return a map of entries.
  * @param filePath full path to the file
  * @param pageType type of the page (delete or append)
@@ -101,49 +142,37 @@ export async function openOrCreatePageFile(pagePath: string): Promise<Page> {
 export async function readPageFile(
 	filePath: string,
 	cacheFields?: string[],
-): Promise<Map<string, MapEntry>> {
+): Promise<Map<Id, MapEntry>> {
 	const pageId = path.basename(filePath)
 
-	const map = new Map<string, MapEntry>()
-	await readLines(filePath, (buffer, offset, size, lineNo) => {
+	const map = new Map<Id, MapEntry>()
+	await readLines(filePath, (buffer, _offset, _size, lineNo) => {
 		try {
-			const json = JSON.parse(buffer.toString('utf-8')) as Idable
-			if (!json.id || json._seq === undefined) {
-				throw new Error('id and _seq are required fields')
-			}
-
-			// id should be a string
-			if (typeof json.id !== 'string') {
-				throw new Error('id must be a string')
-			}
-
-			// sequence number should be a number
-			if (typeof json._seq !== 'number') {
-				throw new Error('_seq must be a number')
-			}
+			const src = buffer.toString('utf8')
+			const json = JSON.parse(src) as Idable
+			missingAndTypeCheck(json, 'id', 'string')
+			missingAndTypeCheck(json, '_oid', 'number')
+			missingAndTypeCheck(json, '_rid', 'number')
+			missingAndTypeCheck(json, '_seq', 'number')
 
 			const entry: MapEntry = {
-				pageId,
-				offset,
-				size,
+				_oid: json._oid,
+				_rid: json._rid,
 				_seq: json._seq,
+				id: json.id,
+				pid: pageId,
+				record: src,
 			}
 
 			if (cacheFields) {
-				const cache: Record<string, unknown> = {}
-				for (const field of cacheFields) {
-					if (json[field]) {
-						cache[field] = json[field]
-					}
-				}
-				entry.cache = cache
+				entry.cache = extractCacheFields(json, cacheFields)
 			}
 
 			map.set(json.id, entry)
 		} catch (error) {
-			throw new Error(`Invalid JSON entry in ${filePath} at lineNo:${lineNo}`, {
-				cause: (error as Error).message,
-			})
+			throw new Error(
+				`Invalid JSON entry in ${filePath} at lineNo:${lineNo}: ${(error as Error).message}`,
+			)
 		}
 	})
 	return map
@@ -194,7 +223,7 @@ export async function readLines(
 						cause: `There is an empty line at line number${lineNo}. Fix the file manually.`,
 					})
 				}
-				// caclulate the size of the line
+				// calculate the size of the line
 				processLine(line, bytesConsumed, Buffer.byteLength(line), lineNo)
 				start = posBreakChar + 1 // skip the break character
 
@@ -220,51 +249,31 @@ export async function readLines(
 	}
 }
 
-export async function readValue(
-	page: Page,
-	offset: number,
-	length: number,
-): Promise<unknown> {
-	const value = await page.rs.read(Buffer.alloc(length), 0, length, offset)
-	try {
-		return JSON.parse(value.buffer.toString())
-	} catch (err) {
-		throw new Error(
-			`Failed to parse JSON value from page:${page.fileName}:${offset}\n${value.buffer}`,
-			{
-				cause: err,
-			},
-		)
-	}
-}
-
 // write a value to the end of the page
 export async function writeValue(
 	page: Page,
-	buffer: Buffer,
+	value: Buffer,
 	sync: number,
 ): Promise<number> {
 	if (sync === 0) {
-		fs.writeSync(page.rs.fd, buffer, 0, buffer.byteLength)
-		page.size += buffer.byteLength
-		return buffer.byteLength
+		fs.writeSync(page.handle.fd, value, 0, value.byteLength)
+		page.size += value.byteLength
+		return value.byteLength
 	}
 
-	await page.rs.write(buffer, 0, buffer.byteLength)
+	const written = page.ws.write(value, (err) => {
+		if (err) {
+			throw err
+		}
+	})
 
-	// const written = page.ws.write(buffer, (err) => {
-	// 	if (err) {
-	// 		throw err
-	// 	}
-	// })
-
-	// if (!written) {
-	// 	await new Promise<void>((resolve) => {
-	// 		page.ws.once('drain', () => {
-	// 			resolve()
-	// 		})
-	// 	})
-	// }
+	if (!written) {
+		await new Promise<void>((resolve) => {
+			page.ws.once('drain', () => {
+				resolve()
+			})
+		})
+	}
 
 	// Throttle the datasync operation to avoid frequent disk writes
 	throttle(() => {
@@ -272,8 +281,8 @@ export async function writeValue(
 	}, sync)()
 
 	// update the size of the page
-	page.size += buffer.byteLength
-	return buffer.byteLength
+	page.size += value.byteLength
+	return value.byteLength
 }
 
 /**
@@ -309,6 +318,7 @@ export async function compactPage(
 
 	const newPagePath = path.join(rootDir, `${newPageId}.tmp`)
 	const newPageHandle = await fsp.open(newPagePath, 'a+')
+
 	const newMap = new Map<string, MapEntry>()
 	let size = 0
 	try {
@@ -317,18 +327,9 @@ export async function compactPage(
 			if (entry._seq < filterSeqNo) {
 				continue
 			}
-			if (entry.pageId === page.pageId) {
-				const oldValue = await page.rs.read(
-					Buffer.alloc(entry.size),
-					0,
-					entry.size,
-					entry.offset,
-				)
-				const written = await newPageHandle.write(
-					oldValue.buffer,
-					0,
-					oldValue.buffer.length,
-				)
+			if (entry.pid === page.pageId) {
+				const oldValue = entry.record
+				const written = await newPageHandle.write(oldValue)
 
 				// we can increment the sequence number here but we are not doing it
 				// as the sequence number can also be used for optimistic updates. If the sequence
@@ -337,8 +338,7 @@ export async function compactPage(
 				// Every page compaction should not invalidate the user cache.
 				newMap.set(id, {
 					...entry,
-					offset: written.bytesWritten,
-					pageId: newPageName,
+					pid: newPageName,
 				})
 				size += written.bytesWritten
 			}
@@ -362,7 +362,7 @@ export async function compactPage(
 
 	// purge any stale entries from map related to the old page
 	for (const [id, entry] of map.entries()) {
-		if (entry.pageId === page.pageId) {
+		if (entry.pid === page.pageId) {
 			map.delete(id)
 		}
 	}

@@ -15,5 +15,10 @@
     "editor.rulers": [
         80,
         100
+    ],
+    "cSpell.words": [
+        "bufferlist",
+        "Idable",
+        "pagegroup"
     ]
 }

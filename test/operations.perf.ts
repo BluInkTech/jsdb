@@ -4,7 +4,7 @@ import { type Idable, openDb } from '../index.js'
 import { getTempDir, printDirStats } from './helpers.js'
 
 const dir = getTempDir()
-let db = await openDb({ dirPath: dir, dataSyncDelay: 1000 })
+let db = await openDb({ dirPath: dir, dataSyncDelay: 0 })
 
 // create test records
 const records = [
@@ -37,7 +37,7 @@ function printPerf(perfName, count) {
 	)
 }
 
-const recordCount = 1000 // 1_000_000
+const recordCount = 1_000_000
 performance.mark('add-records-start')
 // await Promise.all(
 // 	Array.from({ length: recordCount }, (_, i) =>
@@ -55,7 +55,7 @@ db = await openDb({ dirPath: dir })
 
 performance.mark('get-records-start')
 for (let i = 0; i < recordCount; i++) {
-	await db.get(i.toString())
+	db.get(i.toString())
 }
 performance.mark('get-records-end')
 printPerf('get-records', recordCount)

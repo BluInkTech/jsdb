@@ -2,7 +2,7 @@
  * Helpers which work with pages or page groups.
  */
 import path from 'node:path'
-import type { Idable, JsDbOptions } from '../index.js'
+import type { Id, JsDbOptions } from '../index.js'
 import { getFilesWithExtension } from './io.js'
 import { openOrCreatePageFile, readPageFile, writeValue } from './page.js'
 import type { MapEntry, Page } from './page.js'
@@ -13,7 +13,8 @@ import { generateId } from './utils.js'
  * @internal
  */
 export type PageGroup = {
-	map: Map<string, MapEntry>
+	idMap: Map<Id, MapEntry>
+	ridMap: Map<number, MapEntry>
 	extension: string
 	pages: Page[]
 	dirPath: string
@@ -21,6 +22,7 @@ export type PageGroup = {
 	dataSyncDelay: number
 	maxPageSize: number
 	maxStaleBytes: number
+	separator: Buffer
 	close: () => Promise<void>
 }
 
@@ -36,13 +38,17 @@ export async function createPageGroup(
 	extension: string,
 	opts: JsDbOptions,
 ): Promise<PageGroup> {
-	const map = new Map<string, MapEntry>()
+	const idMap = new Map<Id, MapEntry>()
+	const ridMap = new Map<number, MapEntry>()
 	const files = await getFilesWithExtension(dirPath, extension)
 	const pageMaps = await Promise.all(
 		files.map((file) => readPageFile(file, opts.cachedFields)),
 	)
 
-	mergePageMaps(map, ...pageMaps)
+	mergePageMaps(idMap, ...pageMaps)
+	for (const [, entry] of idMap) {
+		ridMap.set(entry._rid, entry)
+	}
 
 	const pages = await Promise.all(
 		files.map((file) => openOrCreatePageFile(file)),
@@ -56,8 +62,9 @@ export async function createPageGroup(
 		pages.push(page)
 	}
 
-	const group = {
-		map,
+	const group: PageGroup = {
+		idMap,
+		ridMap,
 		extension,
 		pages,
 		lastIdx: 0,
@@ -65,9 +72,11 @@ export async function createPageGroup(
 		maxPageSize: opts.maxPageSize,
 		maxStaleBytes: opts.maxPageSize * opts.staleDataThreshold,
 		dataSyncDelay: opts.dataSyncDelay,
+		separator: Buffer.from('\n'),
 		close: async () => {
 			await Promise.all(pages.map((p) => p.close()))
-			group.map.clear()
+			group.idMap.clear()
+			group.ridMap.clear()
 			group.pages = []
 		},
 	}
@@ -75,41 +84,27 @@ export async function createPageGroup(
 }
 
 /**
- * Get the maximum sequence number in a page group.
+ * Get the maximum/minimum sequence number in a page group.
  * @param pg PageGroup
+ * @param comparator Math.max or Math.min
+ * @param field field to get the sequence number for
  * @param pageId pageId to get the sequence number for a specific page
  * @returns the maximum sequence number in the page group or page
  */
-export function maxSequenceNo(pg: PageGroup, pageId?: string): number {
-	let max = 0
-	for (const [, entry] of pg.map) {
-		if (pageId && entry.pageId !== pageId) {
+export function sequenceNo(
+	pg: PageGroup,
+	comparator: Math['max'] | Math['min'],
+	field: '_seq' | '_rid',
+	pageId?: string,
+): number {
+	let value = comparator === Math.max ? 0 : Number.MAX_SAFE_INTEGER
+	for (const [, entry] of pg.ridMap) {
+		if (pageId && entry.pid !== pageId) {
 			continue
 		}
-		if (entry._seq > max) {
-			max = entry._seq
-		}
+		value = comparator(value, entry[field])
 	}
-	return max
-}
-
-/**
- * Get the minimum sequence number in a page group.
- * @param pg PageGroup
- * @param pageId pageId to get the sequence number for a specific page
- * @returns the minimum sequence number in the page group or page
- */
-export function minSequenceNo(pg: PageGroup, pageId?: string) {
-	let min = Number.MAX_SAFE_INTEGER
-	for (const [, entry] of pg.map) {
-		if (pageId && entry.pageId !== pageId) {
-			continue
-		}
-		if (entry._seq < min) {
-			min = entry._seq
-		}
-	}
-	return min
+	return value
 }
 
 /**
@@ -121,12 +116,9 @@ export function minSequenceNo(pg: PageGroup, pageId?: string) {
  * @param createPage function to create a new page
  * @returns a page that can be used for writing
  */
-export async function getfreePage(
-	pg: PageGroup,
-	createPage: (pagePath: string) => Promise<Page> = openOrCreatePageFile,
-): Promise<Page> {
+export function getFreePage(pg: PageGroup): [string, Page | undefined] {
 	let page: Page | undefined = undefined
-
+	let pageId = ''
 	const length = pg.pages.length
 	const startIdx = pg.lastIdx >= 0 && pg.lastIdx < length ? pg.lastIdx : 0
 
@@ -152,40 +144,34 @@ export async function getfreePage(
 
 	// if no page is found, create a new one
 	if (!page) {
-		page = await createPage(
-			path.join(pg.dirPath, `${generateId()}${pg.extension}`),
-		)
-		pg.pages.push(page)
-		pg.lastIdx = pg.pages.length - 1
+		pageId = `${generateId()}${pg.extension}`
+	} else {
+		pageId = page.pageId
 	}
-	return page
+
+	return [pageId, page]
 }
 
 export async function appendToFreePage(
 	pg: PageGroup,
-	seqNo: number,
-	value: Idable,
-): Promise<MapEntry> {
-	const page = await getfreePage(pg)
-
-	// write the value to the page
-	const offset = page.size
-	value._seq = seqNo
-	const jsonStr = `${JSON.stringify(value)}\n`
-	const bytesWritten = await writeValue(
-		page,
-		Buffer.from(jsonStr),
-		pg.dataSyncDelay,
-	)
-
-	const entry: MapEntry = {
-		pageId: page.pageId,
-		offset: offset,
-		size: bytesWritten,
-		_seq: value._seq,
+	value: Buffer,
+	targetPage?: Page,
+	createPageId?: string,
+) {
+	let page = targetPage
+	if (!page) {
+		if (!createPageId) {
+			throw new Error(
+				'INTERNAL: createPageId is required when targetPage is not provided',
+			)
+		}
+		page = await openOrCreatePageFile(path.join(pg.dirPath, createPageId))
+		pg.pages.push(page)
+		pg.lastIdx = pg.pages.length - 1
 	}
 
-	return entry
+	// write the value to the page after appending the separator
+	await writeValue(page, Buffer.concat([value, pg.separator]), pg.dataSyncDelay)
 }
 
 /**
@@ -195,8 +181,8 @@ export async function appendToFreePage(
  * @param maps The maps to merge
  */
 export function mergePageMaps(
-	target: Map<string, MapEntry>,
-	...maps: Map<string, MapEntry>[]
+	target: Map<Id, MapEntry>,
+	...maps: Map<Id, MapEntry>[]
 ) {
 	if (maps.length === 0) {
 		return
@@ -219,7 +205,7 @@ export function mergePageMaps(
  * Remove all entries that have a delete operation.
  * @param target The target map to remove entries from
  */
-export function removeDeletedEntires(
+export function removeDeletedEntries(
 	target: Map<string, MapEntry>,
 	deleteMap: Map<string, MapEntry>,
 ) {
@@ -245,7 +231,7 @@ export function removeDeletedEntires(
 export function calculateStaleBytes(pages: Page[], map: Map<string, MapEntry>) {
 	const totalData: Record<string, number> = {}
 	for (const [_, entry] of map) {
-		totalData[entry.pageId] = (totalData[entry.pageId] || 0) + entry.size
+		totalData[entry.pid] = (totalData[entry.pid] || 0) + entry.record.length
 	}
 
 	for (let i = 0; i < pages.length; i++) {
@@ -263,15 +249,15 @@ export function calculateStaleBytes(pages: Page[], map: Map<string, MapEntry>) {
  * @param map The map of entries
  */
 export function updateStaleBytes(
-	id: string,
+	id: Id,
 	pages: Page[],
-	map: Map<string, MapEntry>,
+	map: Map<Id, MapEntry>,
 ) {
 	const existingEntry = map.get(id)
 	if (existingEntry) {
-		const existingPage = pages.find((p) => p.pageId === existingEntry.pageId)
+		const existingPage = pages.find((p) => p.pageId === existingEntry.pid)
 		if (existingPage) {
-			existingPage.staleBytes += existingEntry.size
+			existingPage.staleBytes += existingEntry.record.length
 		} else {
 			throw new Error(
 				'INTERNAL:Page not found. We have a page entry but the page is missing.',

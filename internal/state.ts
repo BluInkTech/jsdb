@@ -7,8 +7,8 @@ import type { PageGroup } from './pagegroup.js'
  */
 export type DbState = {
 	data: PageGroup
-	logs: PageGroup
 	seqNo: number
+	ridNo: number
 	timers: NodeJS.Timeout[]
 	opts: JsDbOptions
 	opened: boolean
@@ -26,7 +26,7 @@ export function createOptions(options: Partial<JsDbOptions>): JsDbOptions {
 		maxPageSize: 1024 * 1024 * 8, // 8 MB
 		dataSyncDelay: 1000,
 		staleDataThreshold: 0.1,
-		comapctDelay: 1000 * 60 * 60 * 24, // 24 hours
+		compactDelay: 1000 * 60 * 60 * 24, // 24 hours
 		cachedFields: [],
 	}
 
@@ -56,8 +56,8 @@ export function createOptions(options: Partial<JsDbOptions>): JsDbOptions {
 		opts.staleDataThreshold = options.staleDataThreshold
 	}
 
-	if (options.comapctDelay) {
-		opts.comapctDelay = options.comapctDelay
+	if (options.compactDelay) {
+		opts.compactDelay = options.compactDelay
 	}
 
 	if (
