@@ -1,6 +1,6 @@
 import { assert } from 'node:console'
+import { BufferList } from '../../internal/bufferlist'
 import { Benchmark } from '../helpers'
-
 const items = 100_000
 
 function binarySearch<T>(arr: T[], target: T) {
@@ -183,7 +183,47 @@ function splice() {
 	Benchmark.run(`Splice Performance ${items} elements`, 1000)
 }
 
-numberKeys()
-stringKeys()
-iteration()
-splice()
+function mapVsBufferListInit() {
+	const arr = Array.from({ length: items }, (_, i) => i)
+
+	Benchmark.add('Map init', () => {
+		const map = new Map()
+		for (let i = 0; i < items; i++) {
+			map.set(i, true)
+		}
+	})
+
+	Benchmark.add('BufferList init', () => {
+		const buffer = new BufferList(1, 1)
+		for (let i = 0; i < items; i++) {
+			buffer.setSorted([i, i])
+		}
+	})
+	Benchmark.run(`Map vs BufferList init Performance ${items} elements`, 10)
+}
+
+function mapVsBufferListLookup() {
+	const arr = Array.from({ length: items }, (_, i) => i)
+	const buffer: BufferList = new BufferList(1, 1, { init: arr })
+	const map: Map<number, boolean> = new Map(arr.map((num) => [num, true]))
+
+	Benchmark.add('Map lookup', () => {
+		map.get(1000)
+	})
+
+	Benchmark.add('BufferList lookup', () => {
+		buffer.getSorted([1000])
+	})
+
+	Benchmark.run(
+		`Map vs BufferList lookup Performance ${items} elements`,
+		100_000,
+	)
+}
+
+// numberKeys()
+// stringKeys()
+// iteration()
+// splice()
+mapVsBufferListInit()
+mapVsBufferListLookup()
