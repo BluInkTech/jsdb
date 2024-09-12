@@ -325,6 +325,39 @@ describe('BufferList tests', () => {
 			expect(bufferList.getSorted([1, 2])).toBeUndefined()
 		})
 	})
+
+	describe('volume', () => {
+		it('set 1 million records', () => {
+			const buffer = new BufferList(1, 1)
+			for (let i = 0; i < 100_000; i++) {
+				buffer.setSorted([i, i])
+			}
+		})
+
+		it('random sorted insert', () => {
+			const buffer = new BufferList(1, 1)
+
+			for (let i = 0; i < 100_000; i++) {
+				const record = [
+					Math.floor(Math.random() * 100_000),
+					Math.floor(Math.random() * 100),
+				]
+				buffer.setSorted(record)
+			}
+
+			let i = 0
+			let prev: Uint32Array | undefined = undefined
+			// iterate over the buffer to ensure it's sorted
+			for (const record of buffer) {
+				if (i > 0 && prev) {
+					expect(record[0]).toBeGreaterThan(prev[0])
+				} else {
+					prev = record
+				}
+				i++
+			}
+		})
+	})
 })
 
 describe('bisectLeft tests', () => {

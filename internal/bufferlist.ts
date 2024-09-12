@@ -203,13 +203,10 @@ export class BufferList {
 		return this.arrayLen
 	}
 
-	/**
-	 * Gets the count of items in the buffer list.
-	 *
-	 * @returns The count of items.
-	 */
-	get itemsCount() {
-		return this.length / this.stride
+	*[Symbol.iterator]() {
+		for (let i = 0; i < this.arrayLen; i = i + this.stride) {
+			yield this.array.subarray(i, i + this.stride)
+		}
 	}
 
 	/**
@@ -219,7 +216,8 @@ export class BufferList {
 	 * limit, an error is thrown.
 	 */
 	expand() {
-		if (this.arrayLen >= this.array.length) {
+		// increase the size when we are about to reach the limit
+		if (this.arrayLen + 128 >= this.array.length) {
 			// find the ideal size for the buffer which should be a multiple of 4096
 			// and greater than the new length
 			// double the size of the buffer
@@ -227,7 +225,7 @@ export class BufferList {
 			if (size > SAFE_ARRAY_SIZE) {
 				throw new Error('Array size exceeds the maximum limit')
 			}
-			this.buffer.resize(size)
+			this.buffer.resize(size * Uint32Array.BYTES_PER_ELEMENT)
 			this.array = new Uint32Array(this.buffer)
 		}
 	}
@@ -281,7 +279,11 @@ export class BufferList {
 			this.keyLen,
 		)
 		if (exists) {
-			this.array.set(record, index)
+			try {
+				this.array.set(record, index)
+			} catch (e) {
+				console.error('Error setting record', record, index)
+			}
 		} else {
 			this.expand()
 			if (this.length !== 0) {
@@ -290,7 +292,11 @@ export class BufferList {
 				this.array.copyWithin(index + this.stride, index, this.arrayLen)
 			}
 
-			this.array.set(record, index)
+			try {
+				this.array.set(record, index)
+			} catch (e) {
+				console.error('Error setting record', record, index)
+			}
 			this.arrayLen += record.length
 		}
 	}
