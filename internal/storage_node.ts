@@ -45,7 +45,7 @@ export async function createNodeStorage(
 		},
 
 		createBlock: async (pid: string) => {
-			await createHandle(
+			createHandle(
 				pid.endsWith(BLOCK_EXTENSION) ? pid : `${pid}${BLOCK_EXTENSION}`,
 			)
 		},
