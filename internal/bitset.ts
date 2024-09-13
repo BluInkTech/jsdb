@@ -1,17 +1,14 @@
-const SAFE_ARRAY_SIZE = 1 << 30
+export const PAGE_SIZE = 512 // Number of bytes per page
+export const BITS_PER_PAGE = PAGE_SIZE * 8 // Number of bits per page
 
 /**
- * Represents a Bitset data structure.
+ * Represents a sparse Bitset data structure using paging.
  */
 export class Bitset {
-	buffer: ArrayBuffer
-	array: Uint8Array
+	private pages: Map<number, Uint8Array>
 
-	constructor(size = 1024) {
-		this.buffer = new ArrayBuffer(size, {
-			maxByteLength: SAFE_ARRAY_SIZE,
-		})
-		this.array = new Uint8Array(this.buffer)
+	constructor() {
+		this.pages = new Map()
 	}
 
 	/**
@@ -20,19 +17,22 @@ export class Bitset {
 	 * @returns The length of the bitset.
 	 */
 	get length() {
-		return this.array.length
+		return this.pages.size * BITS_PER_PAGE
 	}
 
 	/**
-	 * Resizes the bitset to the specified size.
+	 * Resizes the bitset to the nearest specified size which will be a multiple
+	 * of PAGE_SIZE.
 	 *
 	 * @param size - The desired size of the bitset.
 	 */
 	resize(size: number) {
-		// ensure size is a multiple of 1024
-		const s = Math.ceil(size / 1024) * 1024
-		this.buffer.resize(s)
-		this.array = new Uint8Array(this.buffer)
+		const numPages = Math.ceil(size / BITS_PER_PAGE)
+		for (let i = 0; i < numPages; i++) {
+			if (!this.pages.has(i)) {
+				this.pages.set(i, new Uint8Array(PAGE_SIZE))
+			}
+		}
 	}
 
 	/**
@@ -41,35 +41,17 @@ export class Bitset {
 	 * @param bit - The index of the bit to set.
 	 */
 	set(bit: number) {
-		//  find the index of the byte in the array where the bit is located
-		const byteIndex = bit >> 3 // Same as Math.floor(bit / 8)
+		const pageIndex = Math.floor(bit / BITS_PER_PAGE)
+		const bitIndex = bit % BITS_PER_PAGE
+		const byteIndex = Math.floor(bitIndex / 8)
+		const bitPosition = bitIndex % 8
 
-		// find the bit position in the byte
-		const bitPosition = bit & 7 // Same as bit % 8
-		if (this.array.length <= byteIndex) {
-			this.resize(byteIndex)
+		if (!this.pages.has(pageIndex)) {
+			this.pages.set(pageIndex, new Uint8Array(PAGE_SIZE))
 		}
 
-		if (this.array[byteIndex] === undefined) {
-			this.array[byteIndex] = 0
-		}
-		this.array[byteIndex] |= 1 << bitPosition
-	}
-
-	/**
-	 * Gets the bit at the specified index.
-	 *
-	 * @param bit - The index of the bit to get.
-	 * @returns The value of the bit at the specified index.
-	 */
-	get(bit: number) {
-		const byteIndex = bit >> 3 // Same as Math.floor(bit / 8)
-		const bitPosition = bit & 7 // Same as bit % 8
-		if (this.array.length <= byteIndex || this.array[byteIndex] === undefined) {
-			return false
-		}
-
-		return (this.array[byteIndex] & (1 << bitPosition)) !== 0
+		const page = this.pages.get(pageIndex)
+		page[byteIndex] |= 1 << bitPosition
 	}
 
 	/**
@@ -78,56 +60,80 @@ export class Bitset {
 	 * @param bit - The index of the bit to clear.
 	 */
 	clear(bit: number) {
-		const byteIndex = bit >> 3 // Same as Math.floor(bit / 8)
-		const bitPosition = bit & 7 // Same as bit % 8
-		if (this.array.length <= byteIndex || this.array[byteIndex] === undefined) {
+		const pageIndex = Math.floor(bit / BITS_PER_PAGE)
+		const bitIndex = bit % BITS_PER_PAGE
+		const byteIndex = Math.floor(bitIndex / 8)
+		const bitPosition = bitIndex % 8
+
+		if (!this.pages.has(pageIndex)) {
 			return
 		}
 
-		this.array[byteIndex] &= ~(1 << bitPosition)
+		const page = this.pages.get(pageIndex)
+		page[byteIndex] &= ~(1 << bitPosition)
+	}
+
+	/**
+	 * Gets the bit at the specified index.
+	 *
+	 * @param bit - The index of the bit to get.
+	 * @returns The value of the bit (0 or 1).
+	 */
+	get(bit: number): number {
+		const pageIndex = Math.floor(bit / BITS_PER_PAGE)
+		const bitIndex = bit % BITS_PER_PAGE
+		const byteIndex = Math.floor(bitIndex / 8)
+		const bitPosition = bitIndex % 8
+
+		if (!this.pages.has(pageIndex)) {
+			return 0
+		}
+
+		const page = this.pages.get(pageIndex)
+		return (page[byteIndex] & (1 << bitPosition)) !== 0 ? 1 : 0
 	}
 
 	/**
 	 * Clears all bits in the bitset.
 	 */
 	clearAll() {
-		this.array.fill(0)
+		this.pages.clear()
 	}
 
 	/**
-	 * Calculates the union, intersection, or difference of two bitset.
+	 * Calculates the union, intersection, or difference of two bitsets.
 	 *
 	 * @param other - The other bitset to calculate the operation with.
 	 * @param target - The target bitset to store the result.
-	 * @param operation - The operation
+	 * @param operation - The operation ('difference', 'intersection', 'union').
 	 */
 	calculate(
 		other: Bitset,
 		target: Bitset,
 		operation: 'difference' | 'intersection' | 'union',
 	) {
-		if (this.array.length !== other.array.length) {
-			throw new Error('Bitset length mismatch')
-		}
+		const thisPages = Array.from(this.pages.keys())
+		const otherPages = Array.from(other.pages.keys())
+		const allPages = new Set([...thisPages, ...otherPages])
 
-		// if target is smaller than the current bitset, resize it
-		if (target.array.length < this.array.length) {
-			target.resize(this.array.length)
-		}
+		for (const pageIndex of allPages) {
+			const thisPage = this.pages.get(pageIndex) || new Uint8Array(PAGE_SIZE)
+			const otherPage = other.pages.get(pageIndex) || new Uint8Array(PAGE_SIZE)
+			let targetPage = target.pages.get(pageIndex)
 
-		const length = this.array.length
-		for (let i = 0; i < length; i++) {
-			if (this.array[i] === undefined || other.array[i] === undefined) {
-				continue
+			if (!targetPage) {
+				targetPage = new Uint8Array(PAGE_SIZE)
+				target.pages.set(pageIndex, targetPage)
 			}
 
-			if (operation === 'difference') {
-				target.array[i] =
-					(this.array[i] as number) & ~(other.array[i] as number)
-			} else if (operation === 'intersection') {
-				target.array[i] = (this.array[i] as number) & (other.array[i] as number)
-			} else if (operation === 'union') {
-				target.array[i] = (this.array[i] as number) | (other.array[i] as number)
+			for (let i = 0; i < PAGE_SIZE; i++) {
+				if (operation === 'difference') {
+					targetPage[i] = thisPage[i] & ~otherPage[i]
+				} else if (operation === 'intersection') {
+					targetPage[i] = thisPage[i] & otherPage[i]
+				} else if (operation === 'union') {
+					targetPage[i] = thisPage[i] | otherPage[i]
+				}
 			}
 		}
 	}
@@ -136,16 +142,15 @@ export class Bitset {
 	 * Returns an iterator that iterates over the set bits in the bitset.
 	 */
 	*[Symbol.iterator]() {
-		const length = this.array.length
-		for (let i = 0; i < length; i++) {
-			const byte = this.array[i]
-			if (byte === undefined) {
-				continue
-			}
+		for (const [pageIndex, page] of this.pages) {
+			for (let byteIndex = 0; byteIndex < PAGE_SIZE; byteIndex++) {
+				const byte = page[byteIndex]
+				if (byte === 0) continue
 
-			for (let j = 0; j < 8; j++) {
-				if ((byte & (1 << j)) !== 0) {
-					yield i * 8 + j
+				for (let bitPosition = 0; bitPosition < 8; bitPosition++) {
+					if (byte & (1 << bitPosition)) {
+						yield pageIndex * BITS_PER_PAGE + byteIndex * 8 + bitPosition
+					}
 				}
 			}
 		}
