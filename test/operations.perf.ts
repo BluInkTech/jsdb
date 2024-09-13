@@ -39,13 +39,8 @@ function printPerf(perfName, count) {
 
 const recordCount = 1_000_000
 performance.mark('add-records-start')
-// await Promise.all(
-// 	Array.from({ length: recordCount }, (_, i) =>
-// 		db.set(i.toString(), records[i % records.length]),
-// 	),
-// )
 for (let i = 0; i < recordCount; i++) {
-	await db.set(i.toString(), records[i % records.length])
+	db.set(i.toString(), records[i % records.length])
 }
 performance.mark('add-records-end')
 printPerf('add-records', recordCount)
@@ -69,7 +64,7 @@ printPerf('exists-records', recordCount)
 
 performance.mark('delete-records-start')
 for (let i = 0; i < recordCount; i++) {
-	await db.delete(i.toString())
+	db.delete(i.toString())
 }
 performance.mark('delete-records-end')
 printPerf('delete-records', recordCount)

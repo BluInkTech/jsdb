@@ -1,10 +1,7 @@
-import fs from 'node:fs'
 import fsp from 'node:fs/promises'
-import path from 'node:path'
 import type { Id, Idable } from '../index.js'
 import { mergePageMaps } from './pagegroup.js'
 import { generateId, throttle } from './utils.js'
-
 /**
  * A page represents a file in the database. Each page is
  * a self contained database.
@@ -32,7 +29,7 @@ export type MapEntry = {
 	_rid: number // record identifier
 	_seq: number // sequence number
 	id: Id // unique identifier
-	pid: string // file identifier
+	bid: string // file identifier
 	record: string // the record saved as a string
 	cache?: unknown // inline data used for fast access
 }
@@ -160,7 +157,7 @@ export async function readPageFile(
 				_rid: json._rid,
 				_seq: json._seq,
 				id: json.id,
-				pid: pageId,
+				bid: pageId,
 				record: src,
 			}
 
@@ -327,7 +324,7 @@ export async function compactPage(
 			if (entry._seq < filterSeqNo) {
 				continue
 			}
-			if (entry.pid === page.pageId) {
+			if (entry.bid === page.pageId) {
 				const oldValue = entry.record
 				const written = await newPageHandle.write(oldValue)
 
@@ -338,7 +335,7 @@ export async function compactPage(
 				// Every page compaction should not invalidate the user cache.
 				newMap.set(id, {
 					...entry,
-					pid: newPageName,
+					bid: newPageName,
 				})
 				size += written.bytesWritten
 			}
@@ -362,7 +359,7 @@ export async function compactPage(
 
 	// purge any stale entries from map related to the old page
 	for (const [id, entry] of map.entries()) {
-		if (entry.pid === page.pageId) {
+		if (entry.bid === page.pageId) {
 			map.delete(id)
 		}
 	}

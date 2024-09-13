@@ -1,9 +1,7 @@
 /**
  * Helpers which work with pages or page groups.
  */
-import path from 'node:path'
 import type { Id, JsDbOptions } from '../index.js'
-import { getFilesWithExtension } from './io.js'
 import { openOrCreatePageFile, readPageFile, writeValue } from './page.js'
 import type { MapEntry, Page } from './page.js'
 import { generateId } from './utils.js'
@@ -99,7 +97,7 @@ export function sequenceNo(
 ): number {
 	let value = comparator === Math.max ? 0 : Number.MAX_SAFE_INTEGER
 	for (const [, entry] of pg.ridMap) {
-		if (pageId && entry.pid !== pageId) {
+		if (pageId && entry.bid !== pageId) {
 			continue
 		}
 		value = comparator(value, entry[field])
@@ -231,7 +229,7 @@ export function removeDeletedEntries(
 export function calculateStaleBytes(pages: Page[], map: Map<string, MapEntry>) {
 	const totalData: Record<string, number> = {}
 	for (const [_, entry] of map) {
-		totalData[entry.pid] = (totalData[entry.pid] || 0) + entry.record.length
+		totalData[entry.bid] = (totalData[entry.bid] || 0) + entry.record.length
 	}
 
 	for (let i = 0; i < pages.length; i++) {
@@ -255,7 +253,7 @@ export function updateStaleBytes(
 ) {
 	const existingEntry = map.get(id)
 	if (existingEntry) {
-		const existingPage = pages.find((p) => p.pageId === existingEntry.pid)
+		const existingPage = pages.find((p) => p.pageId === existingEntry.bid)
 		if (existingPage) {
 			existingPage.staleBytes += existingEntry.record.length
 		} else {

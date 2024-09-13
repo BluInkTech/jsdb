@@ -29,14 +29,15 @@
 		"kv"
 	],
 	"devDependencies": {
-		"@biomejs/biome": "1.8.3",
-		"@types/node": "22.5.2",
-		"@vitest/coverage-v8": "2.0.5",
-		"tsx": "4.17.0",
-		"typescript": "5.5.4",
-		"vitest": "2.0.5"
+		"@biomejs/biome": "1.9.0",
+		"@types/node": "22.5.4",
+		"@vitest/coverage-v8": "2.1.0",
+		"tsx": "4.19.1",
+		"typescript": "5.6.2",
+		"vitest": "2.1.0"
 	},
 	"dependencies": {
-		"roaring-wasm": "^1.0.1"
+		"roaring-wasm": "1.0.1",
+		"sinon": "^19.0.0"
 	}
 }

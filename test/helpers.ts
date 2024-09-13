@@ -8,6 +8,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { type PerformanceMeasure, performance } from 'node:perf_hooks'
+import { expect } from 'vitest'
 
 /* cSpell:disable */
 //  100 words with unicode characters
@@ -341,5 +342,80 @@ export const Benchmark = {
 					' % slower',
 			)
 		}
+	},
+}
+
+export const Mock = {
+	mocks: new Map<
+		string,
+		{
+			// biome-ignore lint/complexity/noBannedTypes: mock
+			func: Function
+			called: number
+		}
+	>(),
+
+	// biome-ignore lint/complexity/noBannedTypes: mock
+	trap<T>(funcToMock: Function): T {
+		Mock.mocks.set(funcToMock.name, {
+			func: funcToMock,
+			called: 0,
+		})
+
+		const funcName = funcToMock.name
+		const func = () => {
+			const mockEntry = Mock.mocks.get(funcToMock.name)
+			if (mockEntry) {
+				mockEntry.called++
+			}
+		}
+		func.toString = () => funcName
+		return func as T
+	},
+
+	// biome-ignore lint/complexity/noBannedTypes: mock
+	trapPromise<T>(
+		funcToMock: Function,
+		resolve?: () => unknown,
+		reject?: () => unknown,
+	): T {
+		Mock.mocks.set(funcToMock.name, {
+			func: funcToMock,
+			called: 0,
+		})
+
+		const funcName = funcToMock.name
+		const func = async () => {
+			const mockEntry = Mock.mocks.get(funcToMock.name)
+			if (mockEntry) {
+				mockEntry.called++
+			}
+			if (resolve) {
+				resolve()
+			}
+
+			if (reject) {
+				reject()
+			}
+		}
+		func.toString = () => funcName
+		return func as T
+	},
+
+	// biome-ignore lint/complexity/noBannedTypes: mock
+	calledOnce(fsFunc: Function) {
+		const mockEntry = Mock.mocks.get(fsFunc.toString())
+		if (mockEntry) {
+			return mockEntry.called === 1
+		}
+	},
+
+	// biome-ignore lint/complexity/noBannedTypes: mock
+	restore<T>(funcToRestore: Function): T {
+		const original = Mock.mocks.get(funcToRestore.toString())
+		if (original) {
+			Mock.mocks.delete(funcToRestore.name)
+		}
+		return original as T
 	},
 }
