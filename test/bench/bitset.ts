@@ -17,14 +17,14 @@ function bitsetPerformance() {
 	const bufferBitset = new Bitset()
 	// biome-ignore lint/complexity/noForEach: <explanation>
 	randomArray.forEach((x) => bufferBitset.set(x))
-	const otherBitset = new Bitset(bufferBitset.length)
+	const otherBitset = new Bitset()
 	const bitsToSet = generateRandomArray(2000, 1000, 500000)
 	for (const bit of bitsToSet) {
 		otherBitset.set(bit)
 	}
 
 	// target bitset for intersection
-	const target = new Bitset(bufferBitset.length)
+	const target = new Bitset()
 
 	Benchmark.add('ArrayBuffer Bitset', () => {
 		bufferBitset.calculate(otherBitset, target, 'intersection')
@@ -48,4 +48,11 @@ function bitsetPerformance() {
 	)
 }
 
+/**
+13/09/2024 (x4 faster from the naive implementation)
+Bitset difference performance 500_000 elements (2000 intersection) (x1,000)
+---------------------------------------------------------------------------
+✔  Roaring Bitmap.....................................38,964 ops/s..........25.66 μs/op................0.00 % slower
+✔  ArrayBuffer Bitset..................................8,223 ops/s.........121.60 μs/op...............78.90 % slower
+ */
 bitsetPerformance()

@@ -10,10 +10,10 @@ describe('Bitset', () => {
 	it('should resize correctly', () => {
 		const bitset = new Bitset()
 		bitset.resize(1024)
-		expect(bitset.length).toBe(4096)
+		expect(bitset.length).toBe(8192)
 
 		bitset.resize(10000)
-		expect(bitset.length).toBe(12288)
+		expect(bitset.length).toBe(16384)
 	})
 
 	it('should set and get bits correctly', () => {
