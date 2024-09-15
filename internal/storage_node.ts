@@ -44,7 +44,7 @@ export async function createNodeStorage(
 			}
 		},
 
-		createBlock: async (pid: string) => {
+		createBlock: (pid: string) => {
 			createHandle(
 				pid.endsWith(BLOCK_EXTENSION) ? pid : `${pid}${BLOCK_EXTENSION}`,
 			)
@@ -68,7 +68,10 @@ export async function createNodeStorage(
 		readBlock: readLines.bind(null, dirPath),
 
 		renameBlock: async (oldName, newName) => {
+			// close the old file if it is open
+			await storage.closeBlock(oldName)
 			await fsp.rename(path.join(dirPath, oldName), path.join(dirPath, newName))
+			createHandle(newName)
 		},
 	}
 

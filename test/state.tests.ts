@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { JsDbOptions } from '..'
+import type { Id, JsDbOptions } from '..'
 import {
 	type BlockInfo,
 	type DbState,
 	type MapEntry,
+	compactBlock,
 	createOptions,
 	extractCacheFields,
 	getFreeBlock,
@@ -11,6 +12,7 @@ import {
 	missingAndTypeCheck,
 	sequenceNo,
 } from '../internal/state'
+import sinon from 'sinon'
 
 describe('create option tests', () => {
 	it('valid dir path is required', () => {
@@ -213,7 +215,7 @@ describe('getFreeBlock', () => {
 		const bid = getFreeBlock(state)
 		expect(bid).toBeDefined()
 		// lastIdx will remain unchanged as it will be set by appendToFreePage
-		expect(state.lastUsedBid).toEqual(0)
+		expect(state.lastUsedBid).toEqual(3)
 	})
 
 	it('should return the first free page if lastIdx is negative', async () => {
@@ -259,7 +261,7 @@ describe('mergePageMaps', () => {
 		map1.set('3', { bid: '3', _seq: 3 } as MapEntry)
 		map1.set('4', { bid: '4', _seq: 4 } as MapEntry)
 
-		mergeBlockMaps(target, map1)
+		mergeBlockMaps(target, undefined, map1)
 		expect(target.size).toBe(4)
 		expect(target.get('1')).toMatchObject({
 			bid: '1',
@@ -292,7 +294,7 @@ describe('mergePageMaps', () => {
 		map2.set('5', { bid: '5', _seq: 5 } as MapEntry)
 		map2.set('6', { bid: '6', _seq: 6 } as MapEntry)
 
-		mergeBlockMaps(target, map1, map2)
+		mergeBlockMaps(target, undefined, map1, map2)
 		expect(target.size).toBe(6)
 		expect(target.get('1')).toMatchObject({
 			bid: '1',
@@ -329,7 +331,7 @@ describe('mergePageMaps', () => {
 		map1.set('2', { bid: '2', _seq: 3 } as MapEntry)
 		map1.set('3', { bid: '3', _seq: 4 } as MapEntry)
 
-		mergeBlockMaps(target, map1)
+		mergeBlockMaps(target, undefined, map1)
 		expect(target.size).toBe(3)
 		expect(target.get('1')).toMatchObject({
 			bid: '1',
@@ -354,7 +356,7 @@ describe('mergePageMaps', () => {
 		map1.set('2', { bid: '2', _seq: 2 } as MapEntry)
 		map1.set('3', { bid: '3', _seq: 4 } as MapEntry)
 
-		mergeBlockMaps(target, map1)
+		mergeBlockMaps(target, undefined, map1)
 		expect(target.size).toBe(3)
 
 		expect(target.get('1')).toMatchObject({
@@ -466,5 +468,107 @@ describe('extractCacheFields', () => {
 		const cacheFields: string[] = []
 		const result = extractCacheFields(json, cacheFields)
 		expect(result).toEqual({})
+	})
+})
+
+function createEntry(
+	rid: number,
+	seq: number,
+	oid: number,
+	bid: string,
+): MapEntry {
+	return {
+		id: rid,
+		_rid: rid,
+		_seq: seq,
+		_oid: oid,
+		bid: bid,
+		record: `{"id":${rid},"_rid":${rid},"_seq":${seq},"_oid":${oid}}`,
+	}
+}
+
+describe('compactBlock', () => {
+	it('should throw an error if the block is not found', async () => {
+		const state = {
+			blocks: [{ bid: 'block', locked: false } as BlockInfo],
+		} as DbState
+
+		await expect(compactBlock(state, 'block1')).rejects.toThrow(
+			'Block not found',
+		)
+	})
+
+	it('should throw an error if the block is already locked', async () => {
+		const state = {
+			blocks: [{ bid: 'block', locked: true } as BlockInfo],
+		} as DbState
+
+		await expect(compactBlock(state, 'block')).rejects.toThrow(
+			'Block is already locked',
+		)
+	})
+
+	it('should lock the block and create a new temporary block', async () => {
+		const state = {
+			storage: {
+				createBlock: sinon.stub(),
+				appendToBlock: sinon.stub().resolves(undefined),
+				renameBlock: sinon.stub().resolves(undefined),
+				closeBlock: sinon.stub().resolves(undefined),
+			},
+			ridMap: new Map<number, MapEntry>(),
+			blocks: [{ locked: false, bid: 'block1' } as BlockInfo],
+		}
+
+		await compactBlock(state as unknown as DbState, 'block1')
+		expect(state.blocks[0].locked).toBe(false)
+		expect(state.storage.createBlock.calledWith(sinon.match('.tmp'))).toBe(true)
+	})
+
+	it('should append valid entries to the new block and rename it', async () => {
+		const state = {
+			storage: {
+				createBlock: sinon.stub(),
+				deleteBlock: sinon.stub().resolves(undefined),
+				appendToBlock: sinon.stub().resolves(undefined),
+				renameBlock: sinon.stub().resolves(undefined),
+				closeBlock: sinon.stub().resolves(undefined),
+			},
+			ridMap: new Map<number, MapEntry>([
+				[1, createEntry(1, 2, 1, 'b1')],
+				[2, createEntry(2, 4, 1, 'b1')],
+				[3, createEntry(3, 5, 1, 'b2')],
+			]),
+			idMap: new Map<Id, MapEntry>([
+				[1, createEntry(1, 2, 1, 'b1')],
+				[2, createEntry(2, 4, 1, 'b1')],
+				[3, createEntry(3, 5, 1, 'b2')],
+			]),
+			blocks: [{ bid: 'b1', locked: false, size: 0, staleBytes: 0 }],
+		}
+
+		await compactBlock(state as unknown as DbState, 'b1')
+		expect(
+			state.storage.appendToBlock.calledWith(
+				sinon.match('.tmp'),
+				sinon.match('"id":'),
+			),
+		).toBe(true)
+		expect(
+			state.storage.renameBlock.calledWith(
+				sinon.match('.tmp'),
+				sinon.match('.block'),
+			),
+		).toBe(true)
+		expect(state.blocks.find((b) => b.bid === 'b1')).toBe(undefined)
+		expect(state.blocks.length).toEqual(1)
+		expect(state.ridMap.size).toBe(3)
+		expect(state.idMap.size).toBe(3)
+
+		// The bid should be updated in the maps
+		expect(state.ridMap.get(1)?.bid === 'b1').toBeFalsy()
+		expect(state.idMap.get(1)?.bid === 'b1').toBeFalsy()
+		expect(state.ridMap.get(2)?.bid === 'b1').toBeFalsy()
+		expect(state.idMap.get(2)?.bid === 'b1').toBeFalsy()
 	})
 })

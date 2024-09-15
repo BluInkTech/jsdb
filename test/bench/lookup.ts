@@ -208,11 +208,15 @@ function mapVsBufferListLookup() {
 	const map: Map<number, boolean> = new Map(arr.map((num) => [num, true]))
 
 	Benchmark.add('Map lookup', () => {
-		map.get(1000)
+		if (map.get(1000) !== true) {
+			throw new Error('Map lookup failed')
+		}
 	})
 
 	Benchmark.add('BufferList lookup', () => {
-		buffer.getSorted([1000])
+		if (buffer.getSorted([1000]) === undefined) {
+			throw new Error('BufferList lookup failed')
+		}
 	})
 
 	Benchmark.run(

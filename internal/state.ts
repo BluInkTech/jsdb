@@ -114,7 +114,7 @@ export async function createDbState(opts: JsDbOptions): Promise<DbState> {
 		blocks.map((b) => loadBlock(b.bid, storage, opts.cachedFields)),
 	)
 
-	mergeBlockMaps(idMap, ...blockMaps)
+	mergeBlockMaps(idMap, ridMap, ...blockMaps)
 	for (const [, entry] of idMap) {
 		ridMap.set(entry._rid, entry)
 	}
@@ -379,9 +379,9 @@ export function getFreeBlock(state: DbState): string {
 }
 
 /**
- * Calculate the stale bytes in a page by summing the sizes of all values in a
- * page minus the size of the page
- * @param pages The pages to calculate stale bytes for
+ * Calculate the stale bytes in a block by summing the sizes of all values in a
+ * block minus the size of the block
+ * @param blocks The blocks to calculate stale bytes for
  * @param map The map of entries
  */
 export function calculateStaleBytes(state: DbState) {
@@ -400,14 +400,14 @@ export function calculateStaleBytes(state: DbState) {
 }
 
 /**
- * Update the stale bytes for a page based on the map entry.
+ * Update the stale bytes for a block based on the map entry.
  * When a new entry is added, the existing entry if any will become stale.
  *
  * TODO: record length is not the actual size of the record, we need to
  * calculate the size of the utf8 encoded record
  *
  * @param id The id of the entry
- * @param pages The pages to update
+ * @param blocks The blocks to update
  * @param map The map of entries
  */
 export function updateStaleBytes(
@@ -421,15 +421,94 @@ export function updateStaleBytes(
 			oldBlock.staleBytes += oldEntry.record.length
 		} else {
 			throw new Error(
-				'INTERNAL:Page not found. We have a page entry but the page is missing.',
+				'INTERNAL:block not found. We have a block entry but the block is missing.',
 			)
 		}
 	}
 
-	const newPage = state.blocks.find((b) => b.bid === newEntry.bid)
-	if (newPage) {
-		newPage.size += newEntry.record.length
+	const newBlock = state.blocks.find((b) => b.bid === newEntry.bid)
+	if (newBlock) {
+		newBlock.size += newEntry.record.length
 	}
+}
+
+/**
+ * Compact a block by removing stale entries and rewriting the block.
+ * The compaction is done in following steps:
+ * - Mark the block as locked
+ * - Create a new block file with a random name and write all the valid entries to it.
+ * - Valid entries are those which have block number as the current block number.
+ * - Entries are written by reading the value from the old block and writing it to the new block.
+ * - Create a new map of entries with the new offsets and block number.
+ * - Merge the entries (offsets are changed now) with the map.
+ * - In case the record is updated while compaction, the new record will have a higher sequence number.
+ * - Once the new block is read, then rename the new block file to the old block file.
+ * - Mark the block as unlocked.
+ * @param map The map of entries in the database
+ * @param blocks The list of blocks in the database
+ * @param block The block to compact
+ * @param filterSeqNo The sequence number below which entries are filtered out
+ */
+export async function compactBlock(state: DbState, bid: string): Promise<void> {
+	const block = state.blocks.find((b) => b.bid === bid)
+	if (!block) {
+		throw new Error('Block not found')
+	}
+	if (block.locked) {
+		throw new Error('Block is already locked')
+	}
+
+	block.locked = true
+	const newBid = generateId()
+	state.storage.createBlock(`${newBid}.tmp`)
+	const minSeqNo = sequenceNo(state.ridMap, Math.min, '_seq', block.bid)
+
+	const newMap = new Map<Id, MapEntry>()
+	let size = 0
+	for (const [_, entry] of state.ridMap.entries()) {
+		if (entry._seq < minSeqNo || entry.bid !== block.bid) {
+			continue
+		}
+		newMap.set(entry.id, {
+			...entry,
+			bid: `${newBid}.${BLOCK_EXTENSION}`,
+		})
+		await state.storage.appendToBlock(`${newBid}.tmp`, entry.record)
+		size += entry.record.length
+	}
+
+	state.storage.renameBlock(`${newBid}.tmp`, `${newBid}.${BLOCK_EXTENSION}`)
+
+	// we need to merge the new map with the main map
+	mergeBlockMaps(state.idMap, state.ridMap, newMap)
+
+	// remove the old block entry from the blocks list and add a new block entry
+	const index = state.blocks.findIndex((p) => p.bid === block.bid)
+	state.blocks.splice(index, 1)
+	state.blocks.push({
+		bid: `${newBid}.${BLOCK_EXTENSION}`,
+		size,
+		staleBytes: 0,
+		locked: false,
+	})
+
+	// purge any stale entries from map related to the old block
+	for (const [id, entry] of state.ridMap.entries()) {
+		if (entry.bid === block.bid) {
+			state.ridMap.delete(id)
+			state.idMap.delete(id)
+		}
+	}
+
+	// rename the old page file. If this fails then we will have a database which
+	// will have two entries with same sequence number. This is not a problem as
+	// the next load will pick one of the two files. The other file will have a lot
+	// of stale entries and will be cleaned up eventually.
+	await state.storage.closeBlock(block.bid)
+	await state.storage.renameBlock(
+		`${block.bid}.${BLOCK_EXTENSION}`,
+		`${block.bid}.old`,
+	)
 }
 
 /**
@@ -529,7 +608,8 @@ export function extractCacheFields(
  * @param maps The maps to merge
  */
 export function mergeBlockMaps(
-	target: Map<Id, MapEntry>,
+	idMap: Map<Id, MapEntry>,
+	ridMap?: Map<number, MapEntry>,
 	...maps: Map<Id, MapEntry>[]
 ) {
 	if (maps.length === 0) {
@@ -538,13 +618,16 @@ export function mergeBlockMaps(
 
 	for (const map of maps) {
 		for (const [key, value] of map) {
-			const existing = target.get(key)
+			const existing = idMap.get(key)
 			// use greater than as compaction might result in same sequence number
 			// but offset might be different.
 			if (existing && existing._seq > value._seq) {
 				continue
 			}
-			target.set(key, value)
+			idMap.set(key, value)
+			if (ridMap) {
+				ridMap.set(value._rid, value)
+			}
 		}
 	}
 }

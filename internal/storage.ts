@@ -21,7 +21,7 @@ export interface Storage {
 	appendToBlock: (name: string, entry: string) => Promise<void>
 	close: () => Promise<void>
 	closeBlock: (bid: string) => Promise<void>
-	createBlock: (bid: string) => Promise<void>
+	createBlock: (bid: string) => void
 	deleteBlock: (bid: string) => Promise<void>
 	getBlocksStats: () => Promise<BlockStats[]>
 	getBlockStats: (bid: string) => Promise<BlockStats>
